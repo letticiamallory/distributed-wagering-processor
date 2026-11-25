@@ -180,6 +180,21 @@ describe('wager_transactions: single reversal', () => {
     );
   });
 
+  test('allows a ROLLBACK of a REFUND, and then still refuses a second REFUND of the BET', async () => {
+    const wallet = await newWallet();
+    const bet = await insertTransaction(wallet, processed());
+    const refund = await insertTransaction(wallet, reversal(bet, 'REFUND'));
+
+    // A referência do ROLLBACK é o REFUND, não a BET: outra transação, outra reversão.
+    await insertTransaction(wallet, reversal(refund, 'ROLLBACK'));
+
+    // A BET já foi revertida (o REFUND segue PROCESSED): um segundo REFUND é recusado.
+    await expectViolation(
+      insertTransaction(wallet, reversal(bet, 'REFUND')),
+      'uq_wtx_reversed_once',
+    );
+  });
+
   test('does not count a REJECTED reversal', async () => {
     const wallet = await newWallet();
     const original = await insertTransaction(wallet, processed());
