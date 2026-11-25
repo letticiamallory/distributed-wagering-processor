@@ -1,0 +1,3 @@
+[test]
+# Roda antes de qualquer teste: aponta tudo para o banco de testes.
+preload = ["./test/support/setup.ts"]
