@@ -1,21 +1,9 @@
-import { afterAll, beforeAll, describe, test } from 'bun:test';
-import type { MikroORM } from '@mikro-orm/postgresql';
+import { describe, test } from 'bun:test';
 import { expectViolation } from '../support/assertions.js';
-import { openTestOrm } from '../support/database.js';
-
-let orm: MikroORM;
-
-beforeAll(async () => {
-  orm = await openTestOrm();
-});
-
-afterAll(async () => {
-  await orm.close();
-});
+import { useSql } from '../support/database.js';
 
 // SQL direto no banco real: cada teste tenta violar uma regra do schema.
-const sql = (query: string, params: unknown[] = []) =>
-  orm.em.getConnection().execute(query, params);
+const sql = useSql();
 
 describe('wallets', () => {
   const insertWallet = (
