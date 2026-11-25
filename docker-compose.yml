@@ -1,0 +1,72 @@
+name: distributed-wagering-processor
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: wallet
+      POSTGRES_DB: wallet
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet -d wallet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  sqs:
+    image: ministackorg/ministack
+    ports:
+      - "4566:4566"
+    # A imagem não tem curl nem wget, mas tem Python.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:4566/_ministack/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Roda uma vez, cria as filas e termina.
+  queues-init:
+    image: amazon/aws-cli
+    entrypoint: ["sh"]
+    command: ["/scripts/init-queues.sh"]
+    environment:
+      SQS_ENDPOINT: http://sqs:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./scripts:/scripts:ro
+    depends_on:
+      sqs:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build: .
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgres://wallet:wallet@postgres:5432/wallet
+      SQS_ENDPOINT: http://sqs:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      queues-init:
+        condition: service_completed_successfully
+    # Tempo para o SIGTERM terminar as mensagens em andamento.
+    stop_grace_period: 30s
+
+volumes:
+  pgdata:
