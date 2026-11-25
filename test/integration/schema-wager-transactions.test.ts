@@ -1,63 +1,11 @@
 import { describe, test } from 'bun:test';
 import { expectViolation } from '../support/assertions.js';
 import { useSql } from '../support/database.js';
+import { createFixtures, type Row } from '../support/fixtures.js';
 
 // SQL direto no banco real: cada teste tenta violar uma regra do schema.
 const sql = useSql();
-
-type Row = Record<string, unknown>;
-type Wallet = { walletId: string; playerId: string };
-
-async function newWallet(): Promise<Wallet> {
-  const walletId = crypto.randomUUID();
-  const playerId = crypto.randomUUID();
-  await sql(
-    'INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, ?, ?, ?)',
-    [walletId, playerId, 'BRL', '100.00', 1],
-  );
-  return { walletId, playerId };
-}
-
-// Uma transação válida (PENDING); cada teste sobrescreve só o que quer violar.
-function buildRow(wallet: Wallet, overrides: Row = {}): Row {
-  return {
-    id: crypto.randomUUID(),
-    provider_id: 'provider-a',
-    external_transaction_id: crypto.randomUUID(),
-    idempotency_key: crypto.randomUUID(),
-    payload_hash: 'a'.repeat(64),
-    wallet_id: wallet.walletId,
-    player_id: wallet.playerId,
-    round_id: 'round-1',
-    game_id: 'game-1',
-    kind: 'BET',
-    amount: '10.00',
-    currency: 'BRL',
-    status: 'PENDING',
-    correlation_id: crypto.randomUUID(),
-    ...overrides,
-  };
-}
-
-async function insertTransaction(
-  wallet: Wallet,
-  overrides: Row = {},
-): Promise<string> {
-  const row = buildRow(wallet, overrides);
-  const columns = Object.keys(row);
-  await sql(
-    `INSERT INTO wager_transactions (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
-    Object.values(row),
-  );
-  return row.id as string;
-}
-
-// Campos exigidos pelo schema para uma transação PROCESSED.
-const processed = (): Row => ({
-  status: 'PROCESSED',
-  processed_at: new Date().toISOString(),
-  balance_after: '90.00',
-});
+const { newWallet, insertTransaction, processed } = createFixtures(sql);
 
 describe('wager_transactions', () => {
   test('accepts a valid transaction', async () => {
