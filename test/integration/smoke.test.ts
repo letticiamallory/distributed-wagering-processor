@@ -23,7 +23,9 @@ describe('infrastructure smoke', () => {
 
   test('MiniStack has the three FIFO queues', async () => {
     const { QueueUrls = [] } = await sqs.send(new ListQueuesCommand({}));
-    const names = QueueUrls.map((url) => url.split('/').pop() ?? url).sort((a, b) => a.localeCompare(b));
+    const names = QueueUrls.map((url) => url.split('/').pop() ?? url).sort(
+      (a, b) => a.localeCompare(b),
+    );
     expect(names).toEqual([
       'wager-transactions-dlq.fifo',
       'wager-transactions.fifo',
