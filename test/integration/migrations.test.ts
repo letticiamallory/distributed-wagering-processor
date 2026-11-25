@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
 import config from '../../src/infrastructure/persistence/mikro-orm.config.js';
-import { openTestOrm } from '../support/database.js';
+import { openOrm } from '../support/database.js';
 
 // Roda todas as migrations para cima, para baixo e para cima de novo num banco só deste
 // teste. Se fosse no wallet_test, o `down` derrubaria as tabelas dos outros testes.
@@ -26,7 +26,7 @@ let admin: MikroORM;
 let orm: MikroORM;
 
 beforeAll(async () => {
-  admin = await openTestOrm();
+  admin = await openOrm();
   const connection = admin.em.getConnection();
   await connection.execute(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)`);
   await connection.execute(`CREATE DATABASE ${DB_NAME}`);

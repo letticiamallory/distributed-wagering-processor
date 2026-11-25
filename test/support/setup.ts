@@ -17,7 +17,4 @@ process.env.AWS_ACCESS_KEY_ID ??= 'test';
 process.env.AWS_SECRET_ACCESS_KEY ??= 'test';
 process.env.AWS_REGION ??= 'us-east-1';
 
-// Schema limpo e migrado, uma vez por execução. Import dinâmico porque o config do
-// MikroORM lê DATABASE_URL ao ser importado, e ela só está certa depois das linhas acima.
-const { resetTestDatabase } = await import('./database.js');
-await resetTestDatabase();
+// O schema do banco de testes é recriado sob demanda, por test/support/database.ts.
