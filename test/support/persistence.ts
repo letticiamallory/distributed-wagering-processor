@@ -10,6 +10,7 @@ import {
 } from '../../src/domain/wager/wager-transaction.js';
 import config from '../../src/infrastructure/persistence/mikro-orm.config.js';
 import { MikroOrmUnitOfWork } from '../../src/infrastructure/persistence/mikro-orm-unit-of-work.js';
+import { MikroOrmOutboxRepository } from '../../src/infrastructure/persistence/repositories/mikro-orm-outbox.repository.js';
 import { MikroOrmInboxReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-inbox.reader.js';
 import { MikroOrmWagerTransactionReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-wager-transaction.reader.js';
 import { ensureTestDatabase } from './database.js';
@@ -33,6 +34,8 @@ export interface Persistence {
   uow: MikroOrmUnitOfWork;
   reader: MikroOrmWagerTransactionReader;
   inboxReader: MikroOrmInboxReader;
+  // A outbox fora de transação (só as consultas de observabilidade, como stats()).
+  outbox: MikroOrmOutboxRepository;
   // Todo SQL que o MikroORM enviou, na ordem (para mostrar o FOR UPDATE de verdade).
   queries: string[];
   close(): Promise<void>;
@@ -62,6 +65,7 @@ export async function openPersistence(
     }),
     reader: new MikroOrmWagerTransactionReader(orm.em),
     inboxReader: new MikroOrmInboxReader(orm.em),
+    outbox: new MikroOrmOutboxRepository(orm.em),
     queries,
     close: () => orm.close(),
   };

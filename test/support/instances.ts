@@ -96,7 +96,10 @@ async function waitUntilReady(instance: Instance): Promise<void> {
 // Sobe N PROCESSOS da aplicação de verdade (bun src/main.ts), em portas diferentes, contra o MESMO
 // banco de teste. Nada de threads nem de vários apps no mesmo processo: cada um tem a sua conexão,
 // o seu pool e o seu event loop, como três réplicas.
-export async function startInstances(count = 3): Promise<Instances> {
+export async function startInstances(
+  count = 3,
+  options: { env?: Record<string, string> } = {},
+): Promise<Instances> {
   await ensureTestDatabase(); // o schema existe antes de qualquer instância abrir conexão
   const all: Instance[] = [];
   const killAll = () => {
@@ -127,6 +130,7 @@ export async function startInstances(count = 3): Promise<Instances> {
           // 3 x 15 = 45 conexões, com folga para as do teste e abaixo dos 100 do Postgres.
           DB_POOL_MAX: '15',
           RETRY_AFTER_SECONDS: '1',
+          ...options.env,
         },
         stdout: 'pipe',
         stderr: 'pipe',

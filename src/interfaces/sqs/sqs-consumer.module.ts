@@ -1,4 +1,4 @@
-import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { SQSClient } from '@aws-sdk/client-sqs';
 import {
   Inject,
   Logger,
@@ -12,6 +12,7 @@ import { ProcessWagerTransactionUseCase } from '../../application/use-cases/proc
 import { WageringModule } from '../http/wagering/wagering.module.js';
 import { AwsQueueGateway } from './aws-queue-gateway.js';
 import { QueueGateway } from './queue-gateway.js';
+import { resolveQueueUrls } from './queue-url.js';
 import {
   loadSqsConsumerConfig,
   type SqsConsumerConfig,
@@ -20,43 +21,8 @@ import { WagerSqsConsumer } from './wager-sqs.consumer.js';
 
 const SQS_CONSUMER_CONFIG = Symbol('SQS_CONSUMER_CONFIG');
 
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-// Procura as URLs das duas filas pelo nome. No docker compose o `queues-init` termina antes de
-// a app subir, mas o SQS pode demorar a responder: tenta por até ~30 s e só então desiste (e a
-// aplicação não sobe, em vez de ficar de pé sem consumir).
-export async function resolveQueueUrls(
-  client: SQSClient,
-  names: { queueName: string; dlqName: string },
-  options: { attempts?: number; pauseMs?: number } = {},
-): Promise<{ queueUrl: string; dlqUrl: string }> {
-  const attempts = options.attempts ?? 15;
-  const pauseMs = options.pauseMs ?? 2_000;
-  const logger = new Logger('SqsConsumerModule');
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const [queue, dlq] = await Promise.all([
-        client.send(new GetQueueUrlCommand({ QueueName: names.queueName })),
-        client.send(new GetQueueUrlCommand({ QueueName: names.dlqName })),
-      ]);
-      return { queueUrl: String(queue.QueueUrl), dlqUrl: String(dlq.QueueUrl) };
-    } catch (error) {
-      if (attempt >= attempts) {
-        throw new Error(
-          `the SQS queues ${names.queueName} / ${names.dlqName} were not found after ${attempts} attempts`,
-          { cause: error },
-        );
-      }
-      logger.warn({
-        event: 'queue_lookup_failed',
-        attempt,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      await sleep(pauseMs);
-    }
-  }
-}
+// A procura das URLs mora em queue-url.ts (o publisher da outbox usa a mesma).
+export { resolveQueueUrls };
 
 // Liga o consumidor ao ciclo de vida da aplicação. Desligado (SQS_CONSUMER_ENABLED=false), nem
 // fala com o SQS: o gateway e o consumidor valem `undefined`.

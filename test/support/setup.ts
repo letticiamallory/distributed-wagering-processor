@@ -32,4 +32,11 @@ const TEST_DLQ_NAME = 'test-app-wager-transactions-dlq.fifo';
 process.env.SQS_QUEUE_NAME = TEST_QUEUE_NAME;
 process.env.SQS_DLQ_NAME = TEST_DLQ_NAME;
 
+// O publisher da outbox e o worker de PENDING_REFERENCE também nascem DESLIGADOS nos testes (e nos
+// processos filhos): só o teste que os liga, com a PRÓPRIA fila de eventos, os executa. Os padrões
+// de produção são `true`. A fila de eventos aponta para uma fila só de teste, como as de cima.
+process.env.OUTBOX_PUBLISHER_ENABLED = 'false';
+process.env.PENDING_WORKER_ENABLED = 'false';
+process.env.OUTBOX_QUEUE_NAME = 'test-app-wallet-events.fifo';
+
 // O schema do banco de testes é recriado sob demanda, por test/support/database.ts.
