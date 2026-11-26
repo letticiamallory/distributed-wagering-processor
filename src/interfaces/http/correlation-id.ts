@@ -1,6 +1,9 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import {
+  currentLogContext,
+  runWithLogContext,
+} from '../../infrastructure/observability/log-context.js';
 
 export const CORRELATION_ID_HEADER = 'x-correlation-id';
 
@@ -8,8 +11,6 @@ export const CORRELATION_ID_HEADER = 'x-correlation-id';
 // identificador (letras, dígitos, ponto, dois-pontos, hífen e sublinhado, até 128). Qualquer
 // outra coisa (espaço, aspas, <script>, quebra de linha) é descartada e vira um UUID novo.
 const VALID_CORRELATION_ID = /^[\w.:-]{1,128}$/;
-
-const storage = new AsyncLocalStorage<{ correlationId: string }>();
 
 export function correlationIdFrom(header: string | undefined): string {
   return header !== undefined && VALID_CORRELATION_ID.test(header)
@@ -26,11 +27,13 @@ export function correlationIdMiddleware(
 ): void {
   const correlationId = correlationIdFrom(req.header(CORRELATION_ID_HEADER));
   res.setHeader(CORRELATION_ID_HEADER, correlationId);
-  storage.run({ correlationId }, next);
+  // O mesmo contexto leva o id e os identificadores que os controllers acrescentarem: todo log
+  // feito durante a requisição os traz, sem passar por parâmetro.
+  runWithLogContext(correlationId, {}, next);
 }
 
 // O id da requisição em andamento. Fora de uma requisição (um teste de unidade, por exemplo)
 // devolve um novo, para quem chama nunca receber vazio.
 export function currentCorrelationId(): string {
-  return storage.getStore()?.correlationId ?? randomUUID();
+  return currentLogContext()?.correlationId ?? randomUUID();
 }

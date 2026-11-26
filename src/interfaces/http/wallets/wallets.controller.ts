@@ -4,6 +4,7 @@ import {
   CreateWalletUseCase,
   type CreateWalletResult,
 } from '../../../application/use-cases/create-wallet.use-case.js';
+import { addLogFields } from '../../../infrastructure/observability/log-context.js';
 import { currentCorrelationId } from '../correlation-id.js';
 import { ProviderAuthGuard } from '../provider-auth.guard.js';
 
@@ -22,6 +23,7 @@ export class WalletsController {
     const wallet = await this.createWallet.execute(body, {
       correlationId: currentCorrelationId(),
     });
+    addLogFields({ walletId: wallet.id });
     response.status(201);
     return wallet;
   }
