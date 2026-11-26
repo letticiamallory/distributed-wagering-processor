@@ -124,18 +124,71 @@ describe('reportReconciliation: ready for the reconciliation of phase 8', () => 
     ).toBe(Date.parse('2026-11-26T12:00:00Z') / 1000);
   });
 
-  test('nothing in the production code calls it yet', async () => {
+  test('adds the divergences found to the TOTAL, per kind, and a later clean run never takes them back', async () => {
+    const registry = new PrometheusRegistry();
+    reportReconciliation(registry, {
+      divergences: { balance_mismatch: 2, ledger_gap: 1 },
+      at: new Date('2026-11-26T12:00:00Z'),
+    });
+    reportReconciliation(registry, {
+      divergences: {},
+      at: new Date('2026-11-26T12:05:00Z'),
+    });
+    reportReconciliation(registry, {
+      divergences: { balance_mismatch: 1 },
+      at: new Date('2026-11-26T12:10:00Z'),
+    });
+    expect(
+      await sample(
+        registry,
+        'wallet_reconciliation_divergences_total{kind="balance_mismatch"}',
+      ),
+    ).toBe(3);
+    expect(
+      await sample(
+        registry,
+        'wallet_reconciliation_divergences_total{kind="ledger_gap"}',
+      ),
+    ).toBe(1);
+    // o gauge é o da ÚLTIMA execução; o total é o que alerta
+    expect(
+      await sample(
+        registry,
+        'wallet_reconciliation_divergences{kind="balance_mismatch"}',
+      ),
+    ).toBe(1);
+  });
+
+  test('a failed run adds nothing to the total', async () => {
+    const registry = new PrometheusRegistry();
+    reportReconciliation(registry, {
+      divergences: { ledger_gap: 4 },
+      at: new Date('2026-11-26T12:00:00Z'),
+    });
+    reportReconciliation(registry, {
+      divergences: {},
+      at: new Date(),
+      failed: true,
+    });
+    expect(
+      await sample(
+        registry,
+        'wallet_reconciliation_divergences_total{kind="ledger_gap"}',
+      ),
+    ).toBe(4);
+  });
+
+  test('only the reconcile-wallet use case calls it in production', async () => {
     const hits: string[] = [];
     const glob = new Bun.Glob('src/**/*.ts');
     for await (const file of glob.scan('.')) {
-      if (
-        file.replaceAll('\\', '/') ===
-        'src/application/reconciliation-metrics.ts'
-      )
-        continue;
+      const path = file.replaceAll('\\', '/');
+      if (path === 'src/application/reconciliation-metrics.ts') continue;
       if ((await Bun.file(file).text()).includes('reportReconciliation('))
-        hits.push(file);
+        hits.push(path);
     }
-    expect(hits).toEqual([]);
+    expect(hits).toEqual([
+      'src/application/use-cases/reconcile-wallet.use-case.ts',
+    ]);
   });
 });

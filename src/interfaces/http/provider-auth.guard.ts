@@ -19,7 +19,8 @@ export function bearerTokenOf(request: Request): string | undefined {
 // fica aberto (enunciado, seção 2). Faz duas perguntas, nesta ordem, antes de qualquer validação
 // do corpo (um token ruim é 401 mesmo com o corpo ruim):
 //   1. quem é você?              -> ProviderIdentityPort (401 se não for ninguém)
-//   2. você pode agir como ESTE provedor? -> só quando o corpo traz um `providerId` (403 se não)
+//   2. você pode agir como ESTE provedor? -> só quando a requisição NOMEIA um: o `providerId` do
+//      corpo ou o `:providerId` da rota (403 se não)
 // Sem regra de negócio aqui: a validação do `providerId` (não vazio, até 200 caracteres) é do
 // caso de uso e vale também para a fila, que não passa por este guard.
 @Injectable()
@@ -31,11 +32,13 @@ export class ProviderAuthGuard implements CanActivate {
     const identity = await this.identityPort.identify(bearerTokenOf(request));
 
     const body = request.body as { providerId?: unknown } | undefined;
-    const providerId = body?.providerId;
-    // Sem `providerId` em texto (a criação de wallet, ou um corpo malformado) não há com o que
-    // comparar: o caso de uso responde 400 se for o caso.
-    if (typeof providerId === 'string' && !identity.mayActAs(providerId)) {
-      throw new ProviderForbiddenError(providerId);
+    const params = request.params as { providerId?: unknown } | undefined;
+    // Sem `providerId` em texto (a criação de wallet, uma consulta por id, ou um corpo malformado)
+    // não há com o que comparar: o caso de uso responde 400 se for o caso.
+    for (const providerId of [body?.providerId, params?.providerId]) {
+      if (typeof providerId === 'string' && !identity.mayActAs(providerId)) {
+        throw new ProviderForbiddenError(providerId);
+      }
     }
     return true;
   }

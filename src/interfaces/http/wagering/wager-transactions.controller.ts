@@ -1,10 +1,21 @@
-import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
   ProcessWagerTransactionUseCase,
   type ProcessWagerResult,
 } from '../../../application/use-cases/process-wager-transaction.use-case.js';
 import { addLogFields } from '../../../infrastructure/observability/log-context.js';
+import type { TransactionView } from '../../../application/queries/queries.js';
+import { GetTransactionUseCase } from '../../../application/use-cases/queries.use-cases.js';
 import { currentCorrelationId } from '../correlation-id.js';
 import { statusOfResult } from '../http-status.js';
 import { idempotencyKeyOf } from '../idempotency-header.js';
@@ -16,7 +27,24 @@ import { StoredFailureReplayError } from '../stored-failure-replay.error.js';
 @UseGuards(ProviderAuthGuard)
 @Controller('wagering/transactions')
 export class WagerTransactionsController {
-  constructor(private readonly processWager: ProcessWagerTransactionUseCase) {}
+  constructor(
+    private readonly processWager: ProcessWagerTransactionUseCase,
+    private readonly getTransaction: GetTransactionUseCase,
+  ) {}
+
+  // A transação como está gravada (qualquer status: uma REJECTED, uma PENDING_REFERENCE ou uma
+  // FAILED também é um recurso que existe, então é 200).
+  @Get(':transactionId')
+  async get(
+    @Param('transactionId') transactionId: string,
+  ): Promise<TransactionView> {
+    const view = await this.getTransaction.byId(transactionId);
+    addLogFields({
+      transactionId: view.transactionId,
+      walletId: view.walletId,
+    });
+    return view;
+  }
 
   @Post()
   async submit(

@@ -109,13 +109,18 @@ describe('the Nest application with the publisher and the pending worker switche
       expect(JSON.stringify(logs[0]?.message)).toContain('"drained":true');
     }
 
+    // O que o app publicou ENQUANTO fechava (o ciclo em andamento termina: é o certo, como o evento de
+    // abertura da wallet criada logo antes) chega ao coletor com alguma demora. Drena isso primeiro,
+    // para a linha de base ser a do app já parado.
+    await events.listen(1_500);
+
     // um evento novo, gravado depois do fechamento, fica sem publicar
     const after = await openPersistence();
     try {
       const { createScenario } = await import('../support/wager-scenarios.js');
       const s = createScenario(() => after, { start: new Date() });
-      await s.placeBet({ id: wallet.id, playerId: wallet.playerId }, '1.00');
       const before = events.received().length;
+      await s.placeBet({ id: wallet.id, playerId: wallet.playerId }, '1.00');
       await events.listen(1_500);
       expect(events.received().length).toBe(before);
       const rows = await outboxRowsOf(s.sql, [wallet.id]);
