@@ -17,4 +17,9 @@ process.env.AWS_ACCESS_KEY_ID ??= 'test';
 process.env.AWS_SECRET_ACCESS_KEY ??= 'test';
 process.env.AWS_REGION ??= 'us-east-1';
 
+// O consumidor SQS nasce DESLIGADO nos testes (inclusive nos processos filhos, que herdam o
+// ambiente): só o teste que o liga, com a PRÓPRIA fila, consome. Fixo de propósito (não `??=`):
+// um .env de desenvolvimento não pode ligá-lo e fazer a suíte competir pela fila de verdade.
+process.env.SQS_CONSUMER_ENABLED = 'false';
+
 // O schema do banco de testes é recriado sob demanda, por test/support/database.ts.
