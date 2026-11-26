@@ -246,10 +246,7 @@ export class ProcessWagerTransactionUseCase {
       command.idempotencyKey,
     );
     if (byKey) {
-      if (!byKey.matchesPayload(payloadHash)) {
-        throw new IdempotencyKeyReusedError(command.idempotencyKey);
-      }
-      return toResult(byKey, true);
+      return this.replayOf(byKey, command, payloadHash);
     }
 
     const byExternalId = await lookups.transactions.findByProviderAndExternalId(
@@ -257,12 +254,34 @@ export class ProcessWagerTransactionUseCase {
       command.externalTransactionId,
     );
     if (byExternalId) {
+      // As duas leituras são consultas separadas, e fora do lock (caminho rápido) a mesma
+      // operação pode commitar ENTRE elas: a 1ª não viu a linha e a 2ª viu. Essa linha tem a
+      // MESMA chave, então é replay, não conflito de id externo. Relê a chave antes de decidir:
+      // só é conflito de verdade se a linha daquele id externo é de OUTRA chave.
+      const late = await lookups.transactions.findByIdempotencyKey(
+        command.idempotencyKey,
+      );
+      if (late) {
+        return this.replayOf(late, command, payloadHash);
+      }
       throw new ExternalIdConflictError(
         command.providerId,
         command.externalTransactionId,
       );
     }
     return undefined;
+  }
+
+  // A chave já existe: mesmo conteúdo é replay do resultado guardado; outro conteúdo é conflito.
+  private replayOf(
+    stored: WagerTransaction,
+    command: ProcessWagerTransactionCommand,
+    payloadHash: string,
+  ): ProcessWagerResult {
+    if (!stored.matchesPayload(payloadHash)) {
+      throw new IdempotencyKeyReusedError(command.idempotencyKey);
+    }
+    return toResult(stored, true);
   }
 }
 

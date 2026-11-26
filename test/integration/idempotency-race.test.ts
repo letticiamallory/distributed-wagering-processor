@@ -101,6 +101,67 @@ async function race(options: {
   return { outcome: await slow, counting, reader };
 }
 
+// O caminho rápido lê a chave e, em OUTRA consulta, o id externo. Se a transação igual commita
+// ENTRE as duas leituras, a 1ª não acha nada e a 2ª acha a linha: isso NÃO é conflito de id
+// externo (a linha tem a MESMA chave), é replay. Aqui a janela é reproduzida sem sorte: a
+// 1ª leitura por chave "não enxerga" a linha, e a leitura por id externo já a enxerga.
+class RowAppearsBetweenTheTwoReads extends WagerTransactionReader {
+  keyLookups = 0;
+  findById = (id: string) => db().reader.findById(id);
+  findByIdempotencyKey = (key: string) => {
+    this.keyLookups++;
+    return this.keyLookups === 1
+      ? Promise.resolve(undefined)
+      : db().reader.findByIdempotencyKey(key);
+  };
+  findByProviderAndExternalId = (provider: string, external: string) =>
+    db().reader.findByProviderAndExternalId(provider, external);
+}
+
+describe('the fast path: a row that commits between the key read and the external id read', () => {
+  test('the same operation is a REPLAY, not an EXTERNAL_ID_CONFLICT', async () => {
+    const wallet = await s.walletWith('100.00');
+    const input = s.body(wallet);
+    const first = await s.submit(input);
+    const reader = new RowAppearsBetweenTheTwoReads();
+
+    const replay = await s.submit(input, {}, s.build({ reader }));
+
+    expect(replay).toEqual({ ...first, idempotentReplay: true });
+    expect(await s.directions(wallet.id)).toEqual(['DEBIT']);
+    expect(reader.keyLookups).toBe(2); // a releitura da chave, só depois de achar o id externo
+  });
+
+  test('the same key with ANOTHER payload in that window is IDEMPOTENCY_KEY_REUSED', async () => {
+    const wallet = await s.walletWith('100.00');
+    const input = s.body(wallet);
+    await s.submit(input);
+    const reader = new RowAppearsBetweenTheTwoReads();
+
+    const error = await rejectionOf(
+      s.submit(
+        { ...input, money: { amount: '25.01', currency: 'BRL' } },
+        { idempotencyKey: s.keyOf(input) },
+        s.build({ reader }),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(IdempotencyKeyReusedError);
+  });
+
+  test('a REAL conflict (another key for that external id) is still EXTERNAL_ID_CONFLICT', async () => {
+    const wallet = await s.walletWith('100.00');
+    const input = s.body(wallet);
+    await s.submit(input);
+
+    const error = await rejectionOf(
+      s.submit(input, { idempotencyKey: `another-${uuid()}` }),
+    );
+
+    expect(error).toBeInstanceOf(ExternalIdConflictError);
+  });
+});
+
 describe('the 23505 race: the same key (or external id) from two wallets at once', () => {
   test('same KEY, another wallet: the loser reruns once and answers IDEMPOTENCY_KEY_REUSED (409), writing nothing', async () => {
     const a = await s.walletWith('100.00');
@@ -157,7 +218,9 @@ describe('the 23505 race: the same key (or external id) from two wallets at once
     expect(error).toBeInstanceOf(ExternalIdConflictError);
     expect(error).toMatchObject({ code: FailureCode.ExternalIdConflict });
     expect(counting.runs).toBe(1);
-    expect(reader.keyLookups).toBe(2);
+    // 1ª passada: 1 leitura. Reexecução: 1 leitura + a releitura da chave antes de declarar o
+    // conflito de id externo (a linha pode ter a mesma chave). Total 3, ainda UMA só reexecução.
+    expect(reader.keyLookups).toBe(3);
     expect(
       await s.count(
         'wager_transactions',
