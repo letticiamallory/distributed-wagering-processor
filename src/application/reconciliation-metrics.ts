@@ -16,8 +16,7 @@ export interface ReconciliationReport {
   failed?: boolean;
 }
 
-// Pronta e testada, mas nada a chama ainda: a reconciliação da Fase 8 a usa ao fim de cada
-// execução. Uma execução que terminou REPLACE os valores (um tipo que não aparece volta a 0, para
+// A reconciliação (ReconcileWalletUseCase, Fase 8) a chama ao fim de cada execução. Uma execução que terminou REPLACE os valores (um tipo que não aparece volta a 0, para
 // uma divergência já corrigida sumir do alerta); uma que FALHOU não prova nada, então só conta a
 // falha e deixa os valores e o "último sucesso" como estavam.
 export function reportReconciliation(
@@ -33,6 +32,15 @@ export function reportReconciliation(
     const count = report.divergences[kind] ?? 0;
     total += count;
     metrics.set('wallet_reconciliation_divergences', { kind }, count);
+    // O TOTAL só cresce: é ele que alerta. O gauge acima é o da última execução, e uma conferência
+    // limpa de OUTRA wallet o zera; o total nunca esconde uma divergência já encontrada.
+    if (count > 0) {
+      metrics.increment(
+        'wallet_reconciliation_divergences_total',
+        { kind },
+        count,
+      );
+    }
   }
   metrics.set(
     'wallet_reconciliation_last_run_timestamp_seconds',

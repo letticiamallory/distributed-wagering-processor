@@ -84,6 +84,11 @@ export const METRICS = {
     help: 'Age of the oldest outbox event not yet published (0 when the outbox is empty)',
     labels: [],
   },
+  pending_reference_transactions: {
+    type: 'gauge',
+    help: 'Transactions waiting in PENDING_REFERENCE for the transaction they reference, read at the scrape',
+    labels: [],
+  },
   // ---- HTTP
   http_requests_total: {
     type: 'counter',
@@ -100,6 +105,11 @@ export const METRICS = {
   wallet_reconciliation_divergences: {
     type: 'gauge',
     help: 'Wallets found divergent by the last reconciliation, by kind (balance_mismatch, ledger_gap, negative_balance)',
+    labels: ['kind'],
+  },
+  wallet_reconciliation_divergences_total: {
+    type: 'counter',
+    help: 'Divergences found by reconciliations, by kind. Alert on its increase: unlike the gauge, a later clean check of ANOTHER wallet never hides it',
     labels: ['kind'],
   },
   wallet_reconciliation_last_run_timestamp_seconds: {
