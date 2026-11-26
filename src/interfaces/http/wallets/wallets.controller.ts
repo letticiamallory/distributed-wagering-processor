@@ -1,13 +1,15 @@
-import { Body, Controller, Post, Res } from '@nestjs/common';
+import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   CreateWalletUseCase,
   type CreateWalletResult,
 } from '../../../application/use-cases/create-wallet.use-case.js';
 import { currentCorrelationId } from '../correlation-id.js';
+import { ProviderAuthGuard } from '../provider-auth.guard.js';
 
 // Fino de propósito: passa o corpo bruto ao caso de uso (que valida) e devolve o resultado com o
 // status. Nenhuma regra de negócio aqui.
+@UseGuards(ProviderAuthGuard)
 @Controller('wallets')
 export class WalletsController {
   constructor(private readonly createWallet: CreateWalletUseCase) {}

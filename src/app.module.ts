@@ -4,6 +4,7 @@ import {
   type NestModule,
 } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { AuthModule } from './infrastructure/auth/auth.module.js';
 import { PersistenceModule } from './infrastructure/persistence/persistence.module.js';
 import { correlationIdMiddleware } from './interfaces/http/correlation-id.js';
 import { HealthModule } from './interfaces/http/health/health.module.js';
@@ -13,7 +14,13 @@ import { WageringModule } from './interfaces/http/wagering/wagering.module.js';
 import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
 
 @Module({
-  imports: [PersistenceModule, HealthModule, WalletsModule, WageringModule],
+  imports: [
+    AuthModule,
+    PersistenceModule,
+    HealthModule,
+    WalletsModule,
+    WageringModule,
+  ],
   providers: [
     { provide: HttpConfig, useFactory: () => loadHttpConfig() },
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

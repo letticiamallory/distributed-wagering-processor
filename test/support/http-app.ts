@@ -75,6 +75,8 @@ export interface StartOptions {
 
 export interface TestApp {
   url: string;
+  // O app Nest, para os testes inspecionarem o que foi registrado (controllers, guards).
+  nest: INestApplication;
   logs: LogSpy;
   // Segunda conexão ao MESMO banco de teste, para o teste conferir o que ficou gravado.
   db: Persistence;
@@ -196,6 +198,7 @@ export async function startApp(options: StartOptions = {}): Promise<TestApp> {
 
   return {
     url,
+    nest: running,
     logs,
     db,
     sql: (query, params = []) =>

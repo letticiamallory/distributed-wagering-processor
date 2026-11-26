@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
   ProcessWagerTransactionUseCase,
@@ -7,10 +7,12 @@ import {
 import { currentCorrelationId } from '../correlation-id.js';
 import { statusOfResult } from '../http-status.js';
 import { idempotencyKeyOf } from '../idempotency-header.js';
+import { ProviderAuthGuard } from '../provider-auth.guard.js';
 import { StoredFailureReplayError } from '../stored-failure-replay.error.js';
 
 // Fino de propósito: o corpo e o header vão como estão para o caso de uso (que valida e decide), e
 // o resultado vira o status pelo mapa. Nenhuma regra de negócio aqui.
+@UseGuards(ProviderAuthGuard)
 @Controller('wagering/transactions')
 export class WagerTransactionsController {
   constructor(private readonly processWager: ProcessWagerTransactionUseCase) {}

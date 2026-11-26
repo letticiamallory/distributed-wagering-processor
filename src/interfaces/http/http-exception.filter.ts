@@ -65,6 +65,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (view.status === 503) {
       response.setHeader('Retry-After', String(this.config.retryAfterSeconds));
     }
+    if (view.status === 401) {
+      // Diz ao cliente COMO se autenticar (RFC 9110), sem dizer por que a credencial falhou.
+      response.setHeader('WWW-Authenticate', 'Bearer');
+    }
     response.status(view.status).json({
       error: {
         code: view.code,

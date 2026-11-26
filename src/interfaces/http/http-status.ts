@@ -58,6 +58,9 @@ const ERROR_STATUS: Record<ApiErrorCode, number> = {
   // 503 e 500
   [FailureCode.DependencyUnavailable]: 503,
   [ApiOnlyErrorCode.InternalError]: 500,
+  // autenticação (ADR-0010): 401 não identificado, 403 identificado mas sem o provedor do corpo
+  [ApiOnlyErrorCode.Unauthenticated]: 401,
+  [ApiOnlyErrorCode.ProviderForbidden]: 403,
 };
 
 export function statusOfError(code: ApiErrorCode): number {
