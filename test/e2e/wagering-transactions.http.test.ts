@@ -156,22 +156,7 @@ describe('POST /wagering/transactions: processed (201) and replay (200)', () => 
       await assertInvariants(app.sql, w.id);
   });
 
-  test('50 identical requests at the same time: one 201, forty-nine 200, one debit', async () => {
-    const wallet = await wallet100();
-    const input = wagerBody(wallet);
-
-    const responses = await Promise.all(
-      Array.from({ length: 50 }, () => submitVia(app, input)),
-    );
-
-    const statuses = responses.map((r) => r.status);
-    expect(statuses.filter((s) => s === 201)).toHaveLength(1);
-    expect(statuses.filter((s) => s === 200)).toHaveLength(49);
-    expect(new Set(responses.map((r) => r.body?.transactionId)).size).toBe(1);
-    expect(await directionsOf(wallet.id)).toEqual(['DEBIT']);
-    expect(await balanceOf(wallet.id)).toBe('75.00');
-    await assertInvariants(app.sql, wallet.id);
-  }, 30_000);
+  // "A mesma BET 50 vezes em paralelo" mora em test/concurrency/same-bet-50.test.ts.
 });
 
 describe('Idempotency-Key: the header is the source of truth', () => {
