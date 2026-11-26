@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { startApp, type TestApp } from '../support/http-app.js';
 import { runHotWallet } from '../support/hot-wallet.js';
-import { countErrorNames, recordMetrics } from '../support/ledger-check.js';
+import {
+  countErrorNames,
+  countUnavailableReasons,
+  recordMetrics,
+} from '../support/ledger-check.js';
 import { ProviderClient } from '../support/provider-client.js';
 
 let app: TestApp;
@@ -34,6 +38,8 @@ test('300 mixed operations on ONE wallet at the same time: never negative, the b
     attempts: client.stats.attempts,
     status503: client.stats.status503,
     retries: client.stats.retries,
+    reasons503: countUnavailableReasons(app.logs.at('warn')),
+    jitter: client.jitter,
     processed: result.processed,
     rejected: result.rejected,
     pending: result.pending,

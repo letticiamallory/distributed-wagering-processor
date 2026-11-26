@@ -15,6 +15,7 @@ import {
   ProviderClient,
   type ClientResponse,
 } from '../support/provider-client.js';
+import { rounds } from '../support/rounds.js';
 
 // "ROLLBACK ou REFUND entregue antes da referência" (enunciado, seção 13), mas AGORA junto: a
 // reversão e a BET dela saem ao mesmo tempo, e a que chega primeiro varia. Em qualquer ordem o
@@ -22,7 +23,7 @@ import {
 //   - a BET está PROCESSED;
 //   - a reversão foi aplicada UMA vez (ou direto, ou ficou 202 pendente e foi resolvida depois);
 //   - o saldo voltou a 100.00, com um DEBIT e um CREDIT além da abertura.
-const ROUNDS = 100;
+const ROUNDS = rounds(100);
 
 let app: TestApp;
 let resolver: ResolvePendingReferenceUseCase;

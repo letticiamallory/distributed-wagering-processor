@@ -10,6 +10,7 @@ import {
 } from '../support/ledger-check.js';
 import { openPersistence, type Persistence } from '../support/persistence.js';
 import { ProviderClient } from '../support/provider-client.js';
+import { rounds } from '../support/rounds.js';
 
 // TRÊS PROCESSOS da aplicação (bun src/main.ts), em portas diferentes, contra o mesmo Postgres: o
 // que "três ou mais instâncias rodam simultaneamente" (enunciado, seção 8) pede. Nenhum estado em
@@ -61,7 +62,7 @@ describe('three real processes against one database', () => {
   });
 
   test('section 8 scenario with the two BETs of each round sent to DIFFERENT instances (100 rounds)', async () => {
-    const ROUNDS = 100;
+    const ROUNDS = rounds(100);
     const client = new ProviderClient();
     const setup = new ProviderClient();
     const problems: string[] = [];
@@ -111,7 +112,7 @@ describe('three real processes against one database', () => {
         errors: instances.errorNames(),
       },
     );
-    recordMetrics('5a three instances, section 8 x100', {
+    recordMetrics(`5a three instances, section 8 x${ROUNDS}`, {
       rounds: ROUNDS,
       requests: client.stats.requests,
       attempts: client.stats.attempts,
@@ -142,6 +143,8 @@ describe('three real processes against one database', () => {
       processed: result.processed,
       rejected: result.rejected,
       pending: result.pending,
+      reasons503: instances.unavailableReasons(),
+      jitter: client.jitter,
       perInstance: instances.urls.map((u) => client.perUrl.get(u) ?? 0),
       seed: result.seed,
       elapsedMs: client.elapsedMs(),
@@ -151,7 +154,7 @@ describe('three real processes against one database', () => {
   }, 300_000);
 
   test('the same BET 50 times, copies spread over the three processes: one debit', async () => {
-    const ROUNDS = 10;
+    const ROUNDS = rounds(10);
     const client = new ProviderClient();
     const setup = new ProviderClient();
     const problems: string[] = [];

@@ -12,6 +12,7 @@ import {
 } from '../support/ledger-check.js';
 import { ProviderClient, mapLimit } from '../support/provider-client.js';
 import { createScenario } from '../support/wager-scenarios.js';
+import { rounds } from '../support/rounds.js';
 
 // O cenário OBRIGATÓRIO da seção 8 do enunciado, EXATAMENTE como está escrito:
 //   saldo inicial 100.00 BRL; duas apostas de 80.00 BRL processadas simultaneamente
@@ -19,7 +20,7 @@ import { createScenario } from '../support/wager-scenarios.js';
 //      exatamente um lançamento de débito no ledger.
 // Repetido em muitas rodadas, cada uma com uma wallet nova, para provar que é DETERMINÍSTICO e não
 // sorte: se o lock sumir, uma rodada isolada pode escapar por acaso, cem não.
-const ROUNDS = 100;
+const ROUNDS = rounds(100);
 
 let app: TestApp;
 beforeAll(async () => {
@@ -125,7 +126,7 @@ describe('section 8: two BETs of 80.00 on a wallet of 100.00, at the same time',
 
     failIfAny('1a', ROUNDS, problems);
     // Quem ganha o lock é arbitrário: só registramos a distribuição, não a afirmamos.
-    recordMetrics('1a use case, 100 rounds', {
+    recordMetrics(`1a use case, ${ROUNDS} rounds`, {
       rounds: ROUNDS,
       ...firstWon,
       invariants: 'OK',
@@ -167,7 +168,7 @@ describe('section 8: two BETs of 80.00 on a wallet of 100.00, at the same time',
     failIfAny('1b', ROUNDS, problems, {
       errors: countErrorNames(app.logs.at('error')),
     });
-    recordMetrics('1b http, 100 rounds', {
+    recordMetrics(`1b http, ${ROUNDS} rounds`, {
       rounds: ROUNDS,
       ...client.stats,
       elapsedMs: client.elapsedMs(),
@@ -216,7 +217,7 @@ describe('section 8: two BETs of 80.00 on a wallet of 100.00, at the same time',
       errors: countErrorNames(app.logs.at('error')),
     });
 
-    recordMetrics('1c wide, 100 wallets x 2 BETs', {
+    recordMetrics(`1c wide, ${ROUNDS} wallets x 2 BETs`, {
       requests: responses.length,
       attempts: client.stats.attempts,
       status503: client.stats.status503,
