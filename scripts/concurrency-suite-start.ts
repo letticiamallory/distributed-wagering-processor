@@ -3,6 +3,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 mkdirSync('.context', { recursive: true });
-writeFileSync('.context/concurrency-suite-start.txt', `${new Date().toISOString()}\n`);
+writeFileSync(
+  '.context/concurrency-suite-start.txt',
+  `${new Date().toISOString()}\n`,
+);
 writeFileSync('.context/concurrency-metrics.jsonl', '');
 console.log('concurrency suite started at', new Date().toISOString());

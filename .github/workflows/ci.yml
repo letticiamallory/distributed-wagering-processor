@@ -1,0 +1,93 @@
+name: ci
+
+# Em todo push e em todo pull request. Duas execuções do mesmo ref não competem: a mais nova
+# cancela a mais antiga (o resultado velho não interessa).
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Os mesmos serviços do docker-compose.yml, com as mesmas imagens: nada de mock de banco
+    # nem de fila (CLAUDE.md). O banco "wallet" nasce da variável; o "wallet_test" é criado
+    # pelo mesmo scripts/init-db.sql do compose (um passo abaixo).
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: wallet
+          POSTGRES_DB: wallet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wallet -d wallet"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      sqs:
+        image: ministackorg/ministack
+        ports:
+          - 4566:4566
+        # A imagem não tem curl nem wget, mas tem Python (o mesmo healthcheck do compose).
+        options: >-
+          --health-cmd "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4566/_ministack/health', timeout=3)\""
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # O setup dos testes fixa o banco de testes (wallet_test) e as filas de teste; estas
+      # variáveis são as mesmas do .env.example.
+      DATABASE_URL: postgres://wallet:wallet@localhost:5432/wallet
+      TEST_DATABASE_URL: postgres://wallet:wallet@localhost:5432/wallet_test
+      SQS_ENDPOINT: http://localhost:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      PGPASSWORD: wallet
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A versão do Bun é a do package.json ("packageManager" e "engines"): a mesma local e aqui.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+
+      - run: bun install --frozen-lockfile
+
+      # ---- verificações estáticas (não precisam dos serviços)
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run format:check
+      - run: bun run check:money
+      - run: bun run build
+
+      # ---- infraestrutura
+      - name: Create the test database (same script as docker compose)
+        # Cria o wallet_test e faz o ALTER DATABASE wallet_test SET synchronous_commit = off, que
+        # o teste de durabilidade exige (test-database-durability.test.ts).
+        run: psql -h localhost -U wallet -d wallet -v ON_ERROR_STOP=1 -f scripts/init-db.sql
+
+      - name: Create the queues (same script as docker compose)
+        run: sh scripts/init-queues.sh
+
+      # ---- testes, contra o Postgres e o MiniStack de verdade
+      # O setup dos testes liga os apps a filas SÓ DE TESTE e desliga o consumidor; cada teste
+      # do consumidor cria o seu par de filas (test-*) e apaga ao fim.
+      - run: bun run test
+      - run: bun run test:concurrency
+
+  # O job de resiliência (matar processos, derrubar o banco) entra na Fase 7.
