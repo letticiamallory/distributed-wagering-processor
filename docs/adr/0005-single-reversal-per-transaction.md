@@ -23,13 +23,28 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
   já premiada.
   - LOSS não entra: BET + LOSS + REFUND dá zero, porque a LOSS não mexe no saldo.
   - Se o WIN for revertido (ROLLBACK do WIN `PROCESSED`), a BET volta a poder ser revertida.
+  - **Liquidar quer dizer que o jogador recebeu dinheiro**, o mesmo critério da LOSS. Um WIN de
+    `0.00` não liquida a BET (decisão de 26/11/2026): não paga nada, e um WIN de `0.00` nem pode
+    ser revertido (o ROLLBACK exige valor maior que zero), então contá-lo travaria a BET para
+    sempre sem que o jogador tivesse prêmio algum. Um WIN de `0.01` já liquida.
   - Só vale para REFUND e ROLLBACK de uma **BET**. Um ROLLBACK do próprio WIN, ou de um
     REFUND, não é bloqueado.
   - A política não consulta o banco: o caso de uso calcula `hasSettledWin` (existe WIN
-    `PROCESSED` com `reference_transaction_id` = BET e sem reversão `PROCESSED` apontando para
-    esse WIN), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
+    `PROCESSED` de valor maior que zero com `reference_transaction_id` = BET e sem reversão
+    `PROCESSED` apontando para esse WIN), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
     depois de `REFERENCE_ALREADY_REVERSED` e antes da checagem de saldo. O código é de
     negócio, não retentável: o provedor desiste ou reverte o WIN primeiro.
+- **Vários WINs para a mesma BET são permitidos** (decisão de 26/11/2026). Há jogos que
+  pagam em partes e rodadas bônus que premiam a mesma aposta mais de uma vez, então não existe
+  limite de quantidade nem de soma por BET. A segurança não vem de limitar os WINs, vem de duas
+  coisas que já existem:
+  - **Idempotência por id externo:** cada WIN tem o seu `(provider_id, external_transaction_id)`
+    e a sua chave. Reenviar o MESMO WIN é replay e não paga de novo (ADR-0008); dois WINs com ids
+    externos diferentes são dois prêmios diferentes, e cada um paga uma vez.
+  - **`REFERENCE_SETTLED`:** enquanto existir QUALQUER WIN `PROCESSED` não revertido apontando
+    para a BET, ela não pode ser revertida. Para reverter a BET é preciso reverter antes todos
+    os WINs, um por um (cada um é uma reversão única, como qualquer transação).
+  Por isso o índice `uq_wtx_reversed_once` não cobre WIN: ele só existe para REFUND e ROLLBACK.
 - **Limite de tentativas com a referência pendente:** cada transação respeita o próprio limite
   de tentativas (`attemptsExhausted`). Se a referência ainda está em `PENDING_REFERENCE` e as
   tentativas da reversão acabaram, a política rejeita com `REFERENCE_NOT_PROCESSED` em vez de
@@ -43,6 +58,9 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
 - Checar só no código: duas instâncias processando ao mesmo tempo passam pela checagem juntas.
 - Deixar o ROLLBACK de uma BET premiada passar (como o texto do manual permite): o jogador
   ficaria com o WIN e com a aposta de volta. Fechado pela regra irmã 2.
+- Um WIN por BET (índice único): quebraria o pagamento em partes e as rodadas bônus, que são
+  casos reais. O risco que ele cobriria (pagar e devolver a mesma aposta) já está fechado pela
+  regra irmã 2.
 - Esperar a referência pendente mesmo com as tentativas esgotadas: o limite de uma transação
   passaria a depender do limite da outra.
 
@@ -54,5 +72,7 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
 − `REFERENCE_SETTLED` é um código a mais na taxonomia (categoria `business`, não retentável)
   que o enunciado não prevê; o caso de uso precisa calcular `hasSettledWin` sob o lock da
   wallet, para duas requisições não decidirem com a mesma foto do banco.
+− Não há teto para a soma dos WINs de uma BET: o valor do prêmio é do provedor. Quem confere
+  se o total pago faz sentido é a reconciliação (Fase 8), que sinaliza e não corrige.
 − O caminho normal é o caso de uso (Fase 3) recusar a segunda reversão como rejeição de negócio;
   o índice é a rede de segurança para bugs e corridas, não o fluxo principal.

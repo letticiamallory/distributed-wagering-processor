@@ -13,6 +13,15 @@ Toda constraint tem nome (`ck_`, `uq_`, `fk_`, `pk_`), para o erro dizer qual re
 - **wager_transactions:** `UNIQUE` em `idempotency_key` e em `(provider_id, external_transaction_id)`;
   `amount >= 0`, e só WIN e LOSS podem ter valor 0; trigger que trava UPDATE em PROCESSED,
   REJECTED e FAILED e recusa qualquer DELETE. A reversão única está no ADR-0005.
+  **PENDING só existe num INSERT:** o mesmo trigger recusa qualquer UPDATE que leve a
+  PENDING, de qualquer estado (inclusive de PENDING e de PENDING_REFERENCE). A transação é
+  decidida antes de ser gravada, então nenhum código grava PENDING; se uma linha o tem, nasceu
+  num INSERT, e o banco garante que nada a devolve a esse estado. A espera por uma referência
+  é PENDING_REFERENCE → PENDING_REFERENCE (attempts e next_attempt_at), que continua
+  permitida. Transições aceitas por UPDATE: PENDING → PENDING_REFERENCE | PROCESSED |
+  REJECTED | FAILED; PENDING_REFERENCE → PENDING_REFERENCE | PROCESSED | REJECTED | FAILED;
+  dos três finais, nenhuma. A ordem dentro da função importa: o estado final é recusado
+  primeiro (`is terminal`), depois a volta a PENDING (`cannot be updated to PENDING`).
 - **wallet_ledger_entries:** append-only (trigger por linha e trigger por comando para o TRUNCATE);
   aritmética `balance_before ± amount = balance_after`; `amount > 0`;
   FK `(wallet_id, currency)`; `UNIQUE (wallet_id, wallet_version)`.
@@ -33,4 +42,7 @@ Toda constraint tem nome (`ck_`, `uq_`, `fk_`, `pk_`), para o erro dizer qual re
 − Direção inválida gera uma mensagem menos específica (cita a aritmética).
 − Um superusuário pode desligar os triggers: eles protegem contra bug, não contra administrador.
 − O ledger não aceita DELETE, então os testes usam UUIDs novos e recriam o schema a cada execução.
-− A constraint diferida saldo ↔ ledger fica para uma migration 5, depois da Fase 3.
+− A constraint diferida saldo ↔ ledger fica para uma migration própria, depois da Fase 3.
+− A regra do PENDING mora na função do trigger (`forbid_terminal_change`, recriada por
+  `CREATE OR REPLACE` na migration `wtx_pending_only_on_insert`); o `down` dela devolve a
+  função anterior, e o teste de migrations desce e sobe só esse passo.

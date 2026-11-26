@@ -1,0 +1,180 @@
+import { FailureCode } from '../../domain/errors/failure-code.js';
+import { ApiOnlyErrorCode, type ApiErrorCode } from './api-error-code.js';
+
+// Base dos erros da camada de aplicação. Cada um diz o `code` que a API devolve e se o
+// provedor pode reenviar a MESMA chave depois (retryable). Quem traduz para HTTP é o
+// ExceptionFilter (camada interfaces); aqui não existe status HTTP.
+export abstract class ApplicationError extends Error {
+  abstract readonly code: ApiErrorCode;
+  readonly retryable: boolean = false;
+  // Erro que nunca deveria acontecer e que merece o log mais alto (o filtro HTTP a lê).
+  readonly critical: boolean = false;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = new.target.name;
+  }
+}
+
+export interface InvalidCommandDetail {
+  path: string;
+  message: string;
+}
+
+// Payload inválido (400): o provedor precisa corrigir antes de reenviar.
+export class InvalidCommandError extends ApplicationError {
+  constructor(
+    readonly code:
+      | FailureCode.InvalidPayload
+      | FailureCode.InvalidAmount
+      | FailureCode.UnsupportedKind,
+    message: string,
+    readonly details: InvalidCommandDetail[],
+  ) {
+    super(message);
+  }
+}
+
+// A mesma Idempotency-Key já foi usada com outro conteúdo (409).
+export class IdempotencyKeyReusedError extends ApplicationError {
+  readonly code = FailureCode.IdempotencyKeyReused;
+  constructor(readonly idempotencyKey: string) {
+    super(
+      `Idempotency key "${idempotencyKey}" was already used with a different payload`,
+    );
+  }
+}
+
+// O mesmo messageId chegou com um conteúdo diferente: bug do produtor, não do provedor
+// final. Erro PERMANENTE (a Fase 5 manda para a DLQ): reenviar não resolve, e processar
+// poderia aplicar a operação errada.
+export class InboxMessageReusedError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(
+    readonly consumerName: string,
+    readonly messageId: string,
+  ) {
+    super(
+      `Message ${messageId} of consumer ${consumerName} was already received with a different payload`,
+    );
+  }
+}
+
+// O (provedor, id externo) já existe com outra chave de idempotência (409).
+export class ExternalIdConflictError extends ApplicationError {
+  readonly code = FailureCode.ExternalIdConflict;
+  constructor(
+    readonly providerId: string,
+    readonly externalTransactionId: string,
+  ) {
+    super(
+      `Transaction ${externalTransactionId} of provider ${providerId} already exists under another idempotency key`,
+    );
+  }
+}
+
+// Wallet inexistente (404). Nada é gravado: não há linha de transação para uma wallet
+// que não existe (a FK impede), então esta resposta nunca vira replay.
+export class WalletNotFoundError extends ApplicationError {
+  readonly code = FailureCode.WalletNotFound;
+  constructor(readonly walletId: string) {
+    super(`Wallet ${walletId} was not found`);
+  }
+}
+
+// Já existe wallet deste jogador nesta moeda (409).
+export class WalletAlreadyExistsError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.WalletAlreadyExists;
+  constructor(
+    readonly playerId: string,
+    readonly currency: string,
+  ) {
+    super(`Player ${playerId} already has a ${currency} wallet`);
+  }
+}
+
+// A requisição não trouxe uma credencial válida (401). A mensagem não diz POR QUÊ (ausente,
+// expirada, assinatura ruim): quem testa credenciais não ganha pista.
+export class UnauthenticatedError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.Unauthenticated;
+  constructor(cause?: unknown) {
+    super('Authentication is required', { cause });
+  }
+}
+
+// O chamador foi identificado, mas o provedor do corpo não é um dos dele (403).
+export class ProviderForbiddenError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.ProviderForbidden;
+  constructor(readonly providerId: string) {
+    super('The credential cannot act as the provider of this request');
+  }
+}
+
+// Consulta por uma transação que não existe (404).
+export class TransactionNotFoundError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.TransactionNotFound;
+  constructor(readonly identifier: string) {
+    super(`Transaction ${identifier} was not found`);
+  }
+}
+
+// Falha transitória de infraestrutura (503): banco fora, lock_timeout, deadlock, pool cheio.
+// Nada foi gravado; o provedor reenvia a mesma chave com segurança (ADR-0007 e ADR-0008).
+export class DependencyUnavailableError extends ApplicationError {
+  readonly code = FailureCode.DependencyUnavailable;
+  override readonly retryable = true;
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+  }
+}
+
+// Sinal da infraestrutura: uma constraint UNIQUE recusou a gravação. O caso de uso decide
+// pela constraint (corrida de idempotência roda de novo; as outras são bug). Se escapar,
+// vira 500: o banco fez o trabalho dele e o código tem um bug.
+export class DuplicateKeyError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(
+    readonly constraint: string,
+    cause?: unknown,
+  ) {
+    super(`Unique constraint violated: ${constraint}`, { cause });
+  }
+}
+
+// O UPDATE da wallet com a version esperada não afetou 1 linha. Com o lock isto não
+// deveria acontecer: é bug (500).
+export class ConcurrentWalletUpdateError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(
+    readonly walletId: string,
+    readonly expectedVersion: number,
+  ) {
+    super(
+      `Wallet ${walletId} was not at version ${expectedVersion} when it was saved`,
+    );
+  }
+}
+
+// Uma transação pendente que se esperava em PENDING_REFERENCE já não está (ou não existe): outra
+// instância a resolveu entre a leitura e a gravação. Com o lock da wallet isto não acontece, então é bug (500).
+export class ConcurrentTransactionUpdateError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(readonly transactionId: string) {
+    super(
+      `Transaction ${transactionId} was not PENDING_REFERENCE when it was updated`,
+    );
+  }
+}
+
+// A corrida do 23505 (mesma chave ou mesmo id externo vindo de wallets diferentes) deveria ser
+// resolvida pela reexecução. Se a reexecução TAMBÉM bate no 23505, é bug: 500 e log crítico.
+export class UnresolvedIdempotencyRaceError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  override readonly critical = true;
+  constructor(cause: DuplicateKeyError) {
+    super(
+      `The idempotency race was not settled by the rerun (constraint ${cause.constraint})`,
+      { cause },
+    );
+  }
+}

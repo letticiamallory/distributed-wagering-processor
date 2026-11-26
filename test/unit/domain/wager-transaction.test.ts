@@ -233,13 +233,33 @@ describe('transitions from PENDING', () => {
     }
   });
 
-  test('the observed balance must be in the transaction currency and not negative', () => {
+  // balance_after é SEMPRE o saldo da wallet, na moeda da wallet (ADR-0006). A transação não
+  // conhece a moeda da wallet: quando o provedor manda outra moeda (CURRENCY_MISMATCH), as duas
+  // diferem, e isso é normal. O único limite do domínio é que o saldo não seja negativo.
+  test('the observed balance is the WALLET balance: it may be in another currency than the transaction', () => {
+    const processed = make({ money: usd('10.00') });
+    processed.markProcessed({ balanceAfter: brl('75.00'), at: t1 });
+    expect(processed.balanceAfter?.toJSON()).toEqual({
+      amount: '75.00',
+      currency: 'BRL',
+    });
+
+    const rejected = make({ money: usd('10.00') });
+    rejected.reject(FailureCode.CurrencyMismatch, brl('75.00'));
+    expect(rejected.balanceAfter?.toJSON()).toEqual({
+      amount: '75.00',
+      currency: 'BRL',
+    });
+    expect(rejected.money.currency).toBe('USD'); // o que o provedor mandou continua como veio
+  });
+
+  test('the observed balance cannot be negative, in any currency', () => {
     const tx = make();
     expect(() =>
-      tx.markProcessed({ balanceAfter: usd('75.00'), at: t1 }),
+      tx.markProcessed({ balanceAfter: brl('1.00').negate(), at: t1 }),
     ).toThrow(InvalidWagerTransactionError);
     expect(() =>
-      tx.markProcessed({ balanceAfter: brl('1.00').negate(), at: t1 }),
+      tx.reject(FailureCode.InsufficientFunds, usd('1.00').negate()),
     ).toThrow(InvalidWagerTransactionError);
     expect(tx.status).toBe(S.Pending);
   });

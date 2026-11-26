@@ -30,6 +30,11 @@ beforeAll(async () => {
   const connection = admin.em.getConnection();
   await connection.execute(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)`);
   await connection.execute(`CREATE DATABASE ${DB_NAME}`);
+  // Mesmo ajuste do wallet_test (scripts/init-db.sql): o COMMIT não espera o fsync. É por
+  // banco, então um banco recém-criado não herda; precisa ser feito aqui.
+  await connection.execute(
+    `ALTER DATABASE ${DB_NAME} SET synchronous_commit = off`,
+  );
   orm = await MikroORM.init({ ...config, clientUrl: url.toString() });
 }, 30_000);
 
@@ -58,6 +63,84 @@ async function schemaObjects() {
     functions: rows.filter((r) => r.kind === 'function').map((r) => r.name),
   };
 }
+
+test('the throwaway database also commits without waiting for the fsync', async () => {
+  const rows = await orm.em
+    .getConnection()
+    .execute<{ synchronous_commit: string }[]>('SHOW synchronous_commit');
+  expect(rows[0]?.synchronous_commit).toBe('off');
+});
+
+// A regra "PENDING só existe num INSERT" é a migration mais nova: o down de UMA migration a
+// desfaz (a função volta a ser a de antes) e o up a refaz. O resto do schema não é tocado.
+const INSERT_PENDING_REFERENCE = `
+  INSERT INTO wager_transactions
+    (id, provider_id, external_transaction_id, idempotency_key, payload_hash, wallet_id,
+     player_id, round_id, game_id, kind, amount, currency, status,
+     reference_external_transaction_id, attempts, next_attempt_at, correlation_id)
+  VALUES (?, 'p', ?, ?, ?, ?, ?, 'r', 'g', 'REFUND', '10.00', 'BRL', 'PENDING_REFERENCE',
+     'ext', 1, now(), 'c')`;
+
+test('the latest migration (PENDING only on INSERT) goes down one step and up again', async () => {
+  await orm.migrator.up();
+  const connection = orm.em.getConnection();
+  const walletId = crypto.randomUUID();
+  const playerId = crypto.randomUUID();
+  await connection.execute(
+    'INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, ?, ?, ?)',
+    [walletId, playerId, 'BRL', '100.00', 1],
+  );
+  const newPending = async () => {
+    const id = crypto.randomUUID();
+    await connection.execute(INSERT_PENDING_REFERENCE, [
+      id,
+      crypto.randomUUID(),
+      crypto.randomUUID(),
+      'a'.repeat(64),
+      walletId,
+      playerId,
+    ]);
+    return id;
+  };
+  const outcomeOfToPending = (id: string) =>
+    connection
+      .execute(
+        `UPDATE wager_transactions SET status = 'PENDING', next_attempt_at = NULL WHERE id = ?`,
+        [id],
+      )
+      .then(
+        () => 'accepted',
+        (error: unknown) => (error as Error).message,
+      );
+
+  // up: o UPDATE para PENDING é recusado.
+  expect(await outcomeOfToPending(await newPending())).toContain(
+    'cannot be updated to PENDING',
+  );
+
+  // down de UMA migration: a regra some, o resto continua (a função existe, o trigger vale).
+  await orm.migrator.down();
+  expect((await schemaObjects()).functions).toEqual(FUNCTIONS);
+  const id = await newPending();
+  expect(await outcomeOfToPending(id)).toBe('accepted'); // como antes da migration
+  await connection.execute(
+    `UPDATE wager_transactions SET status = 'PROCESSED', processed_at = now(), balance_after = '90.00' WHERE id = ?`,
+    [id],
+  );
+  const stillTerminal = await connection
+    .execute('UPDATE wager_transactions SET attempts = 5 WHERE id = ?', [id])
+    .then(
+      () => 'accepted',
+      (error: unknown) => (error as Error).message,
+    );
+  expect(stillTerminal).toContain('is terminal'); // a regra do estado final continua
+
+  // up de novo: a regra volta.
+  await orm.migrator.up();
+  expect(await outcomeOfToPending(await newPending())).toContain(
+    'cannot be updated to PENDING',
+  );
+}, 60_000);
 
 test('all migrations go up, down to nothing, and up again', async () => {
   await orm.migrator.up();
