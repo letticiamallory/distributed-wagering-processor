@@ -23,7 +23,41 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Um provedor de verdade: quando o serviço responde 503 (nada foi gravado), espera o Retry-After e
 // reenvia a MESMA requisição com a MESMA Idempotency-Key. É assim que um reenvio é provado seguro:
 // se o serviço duplicasse algo, o teste que usa este cliente veria o saldo ou o ledger errados.
+// Como o cliente espera antes de reenviar depois de um 503 (variável CLIENT_RETRY_JITTER):
+//   none   exatamente o Retry-After (todos voltam juntos: o efeito manada)
+//   narrow 0,6 a 1,0 vezes o Retry-After (o comportamento original deste cliente)
+//   wide   o Retry-After mais um aleatório de 0 a 1 s
+export type RetryJitter = 'none' | 'narrow' | 'wide';
+
+export function retryJitterFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): RetryJitter {
+  const value = env.CLIENT_RETRY_JITTER ?? 'narrow';
+  if (value !== 'none' && value !== 'narrow' && value !== 'wide') {
+    throw new Error(
+      `CLIENT_RETRY_JITTER must be none, narrow or wide (got "${value}")`,
+    );
+  }
+  return value;
+}
+
+export function retryDelayMs(
+  retryAfterSeconds: number,
+  jitter: RetryJitter,
+): number {
+  const base = retryAfterSeconds * 1_000;
+  switch (jitter) {
+    case 'none':
+      return base;
+    case 'wide':
+      return base + Math.random() * 1_000;
+    default:
+      return base * (0.6 + Math.random() * 0.4);
+  }
+}
+
 export class ProviderClient {
+  readonly jitter: RetryJitter = retryJitterFromEnv();
   readonly stats: ClientStats = {
     requests: 0,
     attempts: 0,
@@ -62,8 +96,7 @@ export class ProviderClient {
           this.stats.status503++;
           this.stats.retries++;
           const seconds = Number(response.headers.get('retry-after') ?? '1');
-          // O Retry-After do servidor, com um pouco de jitter para os clientes não voltarem juntos.
-          await sleep(seconds * 1_000 * (0.6 + Math.random() * 0.4));
+          await sleep(retryDelayMs(seconds, this.jitter));
           continue;
         }
         let parsed: Json | undefined;
