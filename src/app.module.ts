@@ -11,6 +11,8 @@ import { HealthModule } from './interfaces/http/health/health.module.js';
 import { HttpConfig, loadHttpConfig } from './interfaces/http/http-config.js';
 import { HttpExceptionFilter } from './interfaces/http/http-exception.filter.js';
 import { SqsConsumerModule } from './interfaces/sqs/sqs-consumer.module.js';
+import { OutboxPublisherModule } from './interfaces/workers/outbox-publisher.module.js';
+import { PendingReferenceWorkerModule } from './interfaces/workers/pending-reference-worker.module.js';
 import { WageringModule } from './interfaces/http/wagering/wagering.module.js';
 import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
 
@@ -22,6 +24,8 @@ import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
     WalletsModule,
     WageringModule,
     SqsConsumerModule,
+    OutboxPublisherModule,
+    PendingReferenceWorkerModule,
   ],
   providers: [
     { provide: HttpConfig, useFactory: () => loadHttpConfig() },
