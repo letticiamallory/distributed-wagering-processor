@@ -37,6 +37,9 @@ export type AckOutcome =
 interface Identified {
   messageId?: string;
   idempotencyKey?: string;
+  // Identificadores para o log (nunca o corpo).
+  walletId?: string;
+  providerId?: string;
 }
 
 // O que fazer com a mensagem. Quem executa (apagar, devolver a visibilidade, mandar para a DLQ)
@@ -100,19 +103,39 @@ export class WagerMessageHandler {
     let parsed: unknown;
     try {
       parsed = JSON.parse(body);
-    } catch (error) {
-      return deadLetter('INVALID_JSON', {}, error);
+    } catch {
+      // O texto do erro do parser CITA um pedaço do corpo: o corpo nunca vai para o log, então a
+      // causa guardada é uma descrição fixa.
+      return deadLetter(
+        'INVALID_JSON',
+        {},
+        new Error('the message body is not valid JSON'),
+      );
     }
 
     const envelope = envelopeSchema.safeParse(parsed);
     if (!envelope.success) {
-      return deadLetter('INVALID_ENVELOPE', identify(parsed), envelope.error);
+      // Só OS CAMINHOS dos campos inválidos (o texto do zod poderia citar valores do corpo).
+      const fields = [
+        ...new Set(
+          envelope.error.issues.map((i) => i.path.join('.') || '(body)'),
+        ),
+      ].join(', ');
+      return deadLetter(
+        'INVALID_ENVELOPE',
+        identify(parsed),
+        new Error(`invalid envelope: ${fields}`),
+      );
     }
     const { messageId, data } = envelope.data;
     const ids: Identified = {
       messageId,
       ...(typeof data.idempotencyKey === 'string' && {
         idempotencyKey: data.idempotencyKey,
+      }),
+      ...(typeof data.walletId === 'string' && { walletId: data.walletId }),
+      ...(typeof data.providerId === 'string' && {
+        providerId: data.providerId,
       }),
     };
 

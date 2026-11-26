@@ -4,16 +4,23 @@ import {
   UnitOfWork,
   type Repositories,
 } from '../../application/ports/unit-of-work.js';
-import { classifyPersistenceError } from './postgres-error-classifier.js';
+import { classifyAndCount } from './classify-and-count.js';
 import { MikroOrmInboxRepository } from './repositories/mikro-orm-inbox.repository.js';
 import { MikroOrmLedgerRepository } from './repositories/mikro-orm-ledger.repository.js';
 import { MikroOrmOutboxRepository } from './repositories/mikro-orm-outbox.repository.js';
 import { MikroOrmWagerTransactionRepository } from './repositories/mikro-orm-wager-transaction.repository.js';
 import { MikroOrmWalletRepository } from './repositories/mikro-orm-wallet.repository.js';
 
+import {
+  NOOP_METRICS,
+  type MetricsPort,
+} from '../../application/ports/metrics.port.js';
+
 export interface UnitOfWorkOptions {
   // Quanto esperar por um lock antes de desistir com 55P03 (ADR-0007: 5s).
   lockTimeoutMs: number;
+  // Conta as falhas transitórias do banco por causa (ADR-0014).
+  metrics?: MetricsPort;
 }
 
 // Uma transação SQL por operação financeira (ADR-0007): READ COMMITTED, com lock_timeout
@@ -29,7 +36,10 @@ export class MikroOrmUnitOfWork extends UnitOfWork {
     if (!Number.isInteger(options.lockTimeoutMs) || options.lockTimeoutMs < 0) {
       throw new Error('lockTimeoutMs must be a non-negative integer');
     }
+    this.metrics = options.metrics ?? NOOP_METRICS;
   }
+
+  private readonly metrics: MetricsPort;
 
   async run<T>(work: (repositories: Repositories) => Promise<T>): Promise<T> {
     try {
@@ -57,7 +67,7 @@ export class MikroOrmUnitOfWork extends UnitOfWork {
     } catch (error) {
       // Erros do caso de uso (domínio e aplicação) passam intactos; erros do driver viram
       // DuplicateKeyError ou DependencyUnavailableError, e o resto continua sendo bug.
-      throw classifyPersistenceError(error);
+      throw classifyAndCount(error, this.metrics);
     }
   }
 }

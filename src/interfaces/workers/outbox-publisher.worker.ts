@@ -40,6 +40,8 @@ export class OutboxPublisherWorker {
     for (const failure of report.failed) {
       const entry = {
         eventId: failure.eventId,
+        correlationId: failure.eventId,
+        walletId: failure.walletId,
         eventType: failure.eventType,
         attempts: failure.attempts,
         error: failure.error,
@@ -50,6 +52,14 @@ export class OutboxPublisherWorker {
       } else {
         this.logger.warn({ event: 'outbox_event_retry', ...entry });
       }
+    }
+    if (report.published > 0) {
+      this.logger.log({
+        event: 'outbox_batch_published',
+        claimed: report.claimed,
+        published: report.published,
+        failed: report.failed.length,
+      });
     }
     return report;
   }

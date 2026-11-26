@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Clock } from '../../application/ports/clock.js';
 import { IdGenerator } from '../../application/ports/id-generator.js';
+import { MetricsPort } from '../../application/ports/metrics.port.js';
 import { PendingReferenceQueue } from '../../application/ports/pending-reference-queue.js';
 import { UnitOfWork } from '../../application/ports/unit-of-work.js';
 import { WagerTransactionReader } from '../../application/ports/wager-transaction-repository.js';
@@ -35,6 +36,7 @@ const PENDING_CONFIG = Symbol('PENDING_WORKER_CONFIG');
         clock: Clock,
         ids: IdGenerator,
         schedule: PendingReferenceSchedule,
+        metrics: MetricsPort,
       ) =>
         config.enabled
           ? new PendingReferenceWorker(
@@ -46,6 +48,7 @@ const PENDING_CONFIG = Symbol('PENDING_WORKER_CONFIG');
                 clock,
                 ids,
                 schedule,
+                metrics,
               ),
               clock,
               {
@@ -54,6 +57,7 @@ const PENDING_CONFIG = Symbol('PENDING_WORKER_CONFIG');
                 pollIntervalMs: config.pollIntervalMs,
                 shutdownTimeoutMs: config.shutdownTimeoutMs,
               },
+              metrics,
             )
           : undefined,
       inject: [
@@ -64,6 +68,7 @@ const PENDING_CONFIG = Symbol('PENDING_WORKER_CONFIG');
         Clock,
         IdGenerator,
         PendingReferenceSchedule,
+        MetricsPort,
       ],
     },
   ],

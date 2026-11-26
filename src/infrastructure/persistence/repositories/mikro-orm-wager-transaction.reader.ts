@@ -1,9 +1,13 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
+import {
+  NOOP_METRICS,
+  type MetricsPort,
+} from '../../../application/ports/metrics.port.js';
 import { WagerTransactionReader } from '../../../application/ports/wager-transaction-repository.js';
 import type { WagerTransaction } from '../../../domain/wager/wager-transaction.js';
 import { WagerTransactionEntity } from '../entities.js';
 import { transactionFromRow } from '../mappers.js';
-import { classifyPersistenceError } from '../postgres-error-classifier.js';
+import { classifyAndCount } from '../classify-and-count.js';
 
 export interface TransactionLookup {
   id?: string;
@@ -24,7 +28,10 @@ export async function findTransaction(
 // chamada usa um EntityManager novo: nenhum cache entre leituras, então uma linha
 // commitada por outra instância aparece na hora.
 export class MikroOrmWagerTransactionReader extends WagerTransactionReader {
-  constructor(private readonly em: EntityManager) {
+  constructor(
+    private readonly em: EntityManager,
+    private readonly metrics: MetricsPort = NOOP_METRICS,
+  ) {
     super();
   }
 
@@ -51,7 +58,7 @@ export class MikroOrmWagerTransactionReader extends WagerTransactionReader {
     try {
       return await findTransaction(this.em.fork(), where);
     } catch (error) {
-      throw classifyPersistenceError(error);
+      throw classifyAndCount(error, this.metrics);
     }
   }
 }

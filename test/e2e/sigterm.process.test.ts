@@ -140,7 +140,8 @@ describe('SIGTERM on a real process with a message in flight', () => {
 
         const text = output.replace(ANSI, '');
         expect(text).toContain('sqs_consumer_stopped');
-        expect(text).toMatch(/drained:\s*true/);
+        // Os logs são JSON (ADR-0014): {"event":"sqs_consumer_stopped","drained":true,...}
+        expect(text).toMatch(/"drained":\s*true/);
       } finally {
         child.kill('SIGKILL');
         await holder.close();

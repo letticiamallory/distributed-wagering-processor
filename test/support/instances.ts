@@ -49,7 +49,8 @@ async function drain(
     instance.output.push(line);
     if (instance.output.length > MAX_OUTPUT_LINES) instance.output.shift();
     const plain = line.replace(ANSI_COLOR, '');
-    const error = /error: '(\w+)'/.exec(plain)?.[1];
+    // Os logs são JSON (ADR-0014): {"event":"request_failed","error":"NomeDoErro",...}.
+    const error = /"error":"(\w+)"/.exec(plain)?.[1];
     if (error) {
       instance.errorCounts[error] = (instance.errorCounts[error] ?? 0) + 1;
     }

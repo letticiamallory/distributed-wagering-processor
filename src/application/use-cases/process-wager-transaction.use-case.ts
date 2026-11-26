@@ -18,6 +18,7 @@ import {
   WalletNotFoundError,
 } from '../errors/application-errors.js';
 import type { Clock } from '../ports/clock.js';
+import { NOOP_METRICS, type MetricsPort } from '../ports/metrics.port.js';
 import type { IdGenerator } from '../ports/id-generator.js';
 import type { InboxReader } from '../ports/inbox-repository.js';
 import type { Repositories, UnitOfWork } from '../ports/unit-of-work.js';
@@ -81,9 +82,36 @@ export class ProcessWagerTransactionUseCase {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly schedule: PendingReferenceSchedule,
+    // Métricas (ADR-0014). Opcional: sem uma porta de verdade, nada é contado.
+    private readonly metrics: MetricsPort = NOOP_METRICS,
   ) {}
 
   async execute(
+    input: unknown,
+    context: ProcessWagerContext,
+  ): Promise<ProcessWagerResult> {
+    const started = performance.now();
+    const channel = channelOf(context);
+    try {
+      const result = await this.process(input, context);
+      this.observe(channel, outcomeOf(result), started);
+      return result;
+    } catch (error) {
+      this.observe(channel, 'error', started);
+      throw error;
+    }
+  }
+
+  // A latência de UMA requisição, da entrada do caso de uso até o resultado (ou o erro).
+  private observe(channel: string, outcome: string, started: number): void {
+    this.metrics.observe(
+      'wager_processing_seconds',
+      { channel, outcome },
+      (performance.now() - started) / 1_000,
+    );
+  }
+
+  private async process(
     input: unknown,
     context: ProcessWagerContext,
   ): Promise<ProcessWagerResult> {
@@ -140,9 +168,18 @@ export class ProcessWagerTransactionUseCase {
     }
 
     // 4 a 10.
-    return this.uow.run((repositories) =>
+    const result = await this.uow.run((repositories) =>
       this.processLocked(command, payloadHash, context, repositories),
     );
+    // Só depois do commit, e só o que foi DECIDIDO agora (um replay achado sob o lock já foi
+    // contado como duplicata).
+    if (!result.idempotentReplay) {
+      this.metrics.increment('wager_transactions_total', {
+        status: result.status,
+        kind: command.kind,
+      });
+    }
+    return result;
   }
 
   private async processLocked(
@@ -208,6 +245,7 @@ export class ProcessWagerTransactionUseCase {
       });
       // Já passamos pela checagem sob o lock: "não é novo" aqui seria um bug.
       if (!(await repositories.inbox.tryReceive(message))) {
+        this.conflict('inbox_message_reused');
         throw new InboxMessageReusedError(
           context.inbox.consumerName,
           context.inbox.messageId,
@@ -221,6 +259,10 @@ export class ProcessWagerTransactionUseCase {
     return toResult(transaction, false);
   }
 
+  private conflict(kind: string): void {
+    this.metrics.increment('wager_conflicts_total', { kind });
+  }
+
   // A mesma checagem nos passos 3 e 5. Devolve o resultado guardado (replay), lança o conflito
   // certo, ou undefined quando é uma operação nova.
   private async findPriorOutcome(
@@ -229,24 +271,31 @@ export class ProcessWagerTransactionUseCase {
     context: ProcessWagerContext,
     lookups: Lookups,
   ): Promise<ProcessWagerResult | undefined> {
+    let redelivery = false;
     if (context.inbox) {
       const received = await lookups.inbox.find(
         context.inbox.consumerName,
         context.inbox.messageId,
       );
       if (received && received.payloadHash !== payloadHash) {
+        this.conflict('inbox_message_reused');
         throw new InboxMessageReusedError(
           context.inbox.consumerName,
           context.inbox.messageId,
         );
       }
+      redelivery = received !== undefined;
     }
 
+    const duplicate = {
+      channel: channelOf(context),
+      kind: redelivery ? 'inbox_redelivery' : 'idempotency_key_replay',
+    };
     const byKey = await lookups.transactions.findByIdempotencyKey(
       command.idempotencyKey,
     );
     if (byKey) {
-      return this.replayOf(byKey, command, payloadHash);
+      return this.replayOf(byKey, command, payloadHash, duplicate);
     }
 
     const byExternalId = await lookups.transactions.findByProviderAndExternalId(
@@ -262,8 +311,9 @@ export class ProcessWagerTransactionUseCase {
         command.idempotencyKey,
       );
       if (late) {
-        return this.replayOf(late, command, payloadHash);
+        return this.replayOf(late, command, payloadHash, duplicate);
       }
+      this.conflict('external_id_conflict');
       throw new ExternalIdConflictError(
         command.providerId,
         command.externalTransactionId,
@@ -277,10 +327,13 @@ export class ProcessWagerTransactionUseCase {
     stored: WagerTransaction,
     command: ProcessWagerTransactionCommand,
     payloadHash: string,
+    duplicate: { channel: string; kind: string },
   ): ProcessWagerResult {
     if (!stored.matchesPayload(payloadHash)) {
+      this.conflict('idempotency_key_reused');
       throw new IdempotencyKeyReusedError(command.idempotencyKey);
     }
+    this.metrics.increment('wager_duplicates_total', duplicate);
     return toResult(stored, true);
   }
 }
@@ -299,3 +352,10 @@ function toResult(
     idempotentReplay,
   };
 }
+
+const channelOf = (context: ProcessWagerContext): string =>
+  context.inbox ? 'sqs' : 'http';
+
+// O rótulo do histograma: replay, ou o status final em minúsculas (processed, rejected...).
+const outcomeOf = (result: ProcessWagerResult): string =>
+  result.idempotentReplay ? 'replay' : result.status.toLowerCase();

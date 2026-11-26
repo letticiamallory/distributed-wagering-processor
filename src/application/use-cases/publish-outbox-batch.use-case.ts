@@ -1,4 +1,5 @@
 import type { Clock } from '../ports/clock.js';
+import { NOOP_METRICS, type MetricsPort } from '../ports/metrics.port.js';
 import type { IntegrationEventPublisher } from '../ports/integration-event-publisher.js';
 import type { UnitOfWork } from '../ports/unit-of-work.js';
 
@@ -13,6 +14,7 @@ export interface PublishOptions {
 
 export interface FailedEvent {
   eventId: string;
+  walletId: string;
   eventType: string;
   attempts: number;
   error: string;
@@ -43,10 +45,11 @@ export class PublishOutboxBatchUseCase {
     private readonly publisher: IntegrationEventPublisher,
     private readonly clock: Clock,
     private readonly options: PublishOptions,
+    private readonly metrics: MetricsPort = NOOP_METRICS,
   ) {}
 
-  execute(): Promise<PublishReport> {
-    return this.uow.run(async (repositories) => {
+  async execute(): Promise<PublishReport> {
+    const report = await this.uow.run(async (repositories) => {
       const batch = await repositories.outbox.claimDue(
         this.options.batchSize,
         this.clock.now(),
@@ -73,6 +76,7 @@ export class PublishOutboxBatchUseCase {
           message.scheduleRetry(at, this.options.jitter(), error);
           failed.push({
             eventId: message.id,
+            walletId: message.aggregateId,
             eventType: message.eventType,
             attempts: message.attempts,
             error,
@@ -83,5 +87,21 @@ export class PublishOutboxBatchUseCase {
       }
       return { claimed: batch.length, published, failed };
     });
+    // Só depois do commit (o que foi desfeito não aconteceu).
+    if (report.published > 0) {
+      this.metrics.increment(
+        'outbox_events_published_total',
+        {},
+        report.published,
+      );
+    }
+    if (report.failed.length > 0) {
+      this.metrics.increment(
+        'wager_retries_total',
+        { component: 'outbox' },
+        report.failed.length,
+      );
+    }
+    return report;
   }
 }

@@ -86,3 +86,9 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
   deve ser exposto** fora de uma rede confiável até a implementação real entrar.
 − O 403 por `providerId` só protege o que o corpo declara: as consultas de leitura herdam a
   mesma regra quando forem escritas, e o teste de "todo controller tem guard" é o que garante isso.
+
+## Adendo (Fase 7, ADR-0014): `/metrics` também é aberto
+O `GET /metrics` fica aberto como o `/health`: quem o raspa (o Prometheus) não é um provedor e não
+tem token. Só expõe contagens e latências, nunca um valor, uma wallet ou um jogador (há um teste). O
+teste que percorre todos os controllers agora aceita sem o guard **só** o de health e o de métricas.
+Num ambiente real, o `/metrics` ficaria numa porta ou rede internas.

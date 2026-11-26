@@ -7,6 +7,7 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { Clock } from '../../application/ports/clock.js';
+import { MetricsPort } from '../../application/ports/metrics.port.js';
 import { IntegrationEventPublisher } from '../../application/ports/integration-event-publisher.js';
 import { OutboxReader } from '../../application/ports/outbox-repository.js';
 import { UnitOfWork } from '../../application/ports/unit-of-work.js';
@@ -53,14 +54,21 @@ const OUTBOX_SQS = Symbol('OUTBOX_PUBLISHER_SQS');
         uow: UnitOfWork,
         reader: OutboxReader,
         clock: Clock,
+        metrics: MetricsPort,
       ) =>
         publisher
           ? new OutboxPublisherWorker(
-              new PublishOutboxBatchUseCase(uow, publisher, clock, {
-                batchSize: config.batchSize,
-                jitter: Math.random,
-                stuckAfterAttempts: config.stuckAfterAttempts,
-              }),
+              new PublishOutboxBatchUseCase(
+                uow,
+                publisher,
+                clock,
+                {
+                  batchSize: config.batchSize,
+                  jitter: Math.random,
+                  stuckAfterAttempts: config.stuckAfterAttempts,
+                },
+                metrics,
+              ),
               reader,
               clock,
               {
@@ -77,6 +85,7 @@ const OUTBOX_SQS = Symbol('OUTBOX_PUBLISHER_SQS');
         UnitOfWork,
         OutboxReader,
         Clock,
+        MetricsPort,
       ],
     },
   ],
