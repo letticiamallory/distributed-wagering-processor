@@ -172,6 +172,26 @@ export function failIfAny(
   );
 }
 
+// Por que a aplicação respondeu 503: o texto entre parênteses de "Database unavailable or busy
+// (...)": 55P03 (lock_timeout) ou "timeout exceeded when trying to connect" (pool sem conexão).
+export function countUnavailableReasons(
+  entries: ReadonlyArray<{ message: unknown }>,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of entries) {
+    const message = (entry.message as { message?: unknown } | undefined)
+      ?.message;
+    const reason =
+      typeof message === 'string'
+        ? /Database unavailable or busy \(([^)]*)\)/.exec(message)?.[1]
+        : undefined;
+    if (reason) {
+      counts[reason] = (counts[reason] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 // Conta os erros que a aplicação registrou no log (ConcurrentWalletUpdateError, DuplicateKeyError...).
 export function countErrorNames(
   entries: ReadonlyArray<{ message: unknown }>,

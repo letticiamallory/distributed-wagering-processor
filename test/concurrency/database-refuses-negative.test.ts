@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { usePersistence } from '../support/persistence.js';
 import { failIfAny, recordMetrics } from '../support/ledger-check.js';
 import { createScenario } from '../support/wager-scenarios.js';
+import { rounds } from '../support/rounds.js';
 
 // A terceira barreira (ADR-0007): MESMO que um bug tire o lock e a versão, o BANCO recusa o saldo
 // negativo. Aqui não há aplicação no meio: dois UPDATEs em SQL puro, ao mesmo tempo, na mesma
@@ -12,7 +13,7 @@ import { createScenario } from '../support/wager-scenarios.js';
 // desta suíte o exercita. Sem ele, o CHECK poderia sumir sem que ninguém notasse.
 const db = usePersistence();
 const s = createScenario(db);
-const ROUNDS = 50;
+const ROUNDS = rounds(50);
 
 describe('the database refuses a negative balance on its own, under concurrency', () => {
   test(`two parallel debits of 80.00 on 100.00: one is refused by ck_wallets_balance_non_negative (${ROUNDS} rounds)`, async () => {

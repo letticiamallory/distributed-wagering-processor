@@ -8,6 +8,10 @@ export interface Instance {
   process: ReturnType<typeof Bun.spawn>;
   // As últimas linhas que o processo escreveu (stdout e stderr), para mostrar se algo falhar.
   output: string[];
+  // Contagens feitas LINHA A LINHA durante a leitura (o buffer acima guarda só o final e estouraria
+  // com centenas de avisos): o nome de cada erro registrado e o motivo de cada 503.
+  errorCounts: Record<string, number>;
+  unavailableCounts: Record<string, number>;
 }
 
 export interface Instances {
@@ -15,6 +19,9 @@ export interface Instances {
   urls: string[];
   // Os erros que cada processo registrou no log, contados pelo nome ("ConcurrentWalletUpdateError").
   errorNames(): Record<string, number>;
+  // Por que cada processo respondeu 503: o texto entre parênteses de "Database unavailable or busy
+  // (...)": 55P03 (lock_timeout) ou "timeout exceeded when trying to connect" (pool sem conexão).
+  unavailableReasons(): Record<string, number>;
   stop(): Promise<void>;
 }
 
@@ -32,19 +39,34 @@ function freePort(): number {
 
 async function drain(
   stream: ReadableStream<Uint8Array> | undefined | null,
-  into: string[],
+  instance: Pick<Instance, 'output' | 'errorCounts' | 'unavailableCounts'>,
 ): Promise<void> {
   if (!stream) return;
   const decoder = new TextDecoder();
+  let pending = ''; // um bloco pode terminar no meio de uma linha
+  const take = (line: string) => {
+    if (line.trim() === '') return;
+    instance.output.push(line);
+    if (instance.output.length > MAX_OUTPUT_LINES) instance.output.shift();
+    const plain = line.replace(ANSI_COLOR, '');
+    const error = /error: '(\w+)'/.exec(plain)?.[1];
+    if (error) {
+      instance.errorCounts[error] = (instance.errorCounts[error] ?? 0) + 1;
+    }
+    const reason = /Database unavailable or busy \(([^)]*)\)/.exec(plain)?.[1];
+    if (reason) {
+      instance.unavailableCounts[reason] =
+        (instance.unavailableCounts[reason] ?? 0) + 1;
+    }
+  };
   try {
     for await (const chunk of stream) {
-      for (const line of decoder.decode(chunk).split(/\r?\n/)) {
-        if (line.trim() !== '') {
-          into.push(line);
-          if (into.length > MAX_OUTPUT_LINES) into.shift();
-        }
-      }
+      pending += decoder.decode(chunk, { stream: true });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? '';
+      lines.forEach(take);
     }
+    take(pending);
   } catch {
     // o processo morreu: o que já foi lido basta
   }
@@ -94,6 +116,8 @@ export async function startInstances(count = 3): Promise<Instances> {
     for (let index = 0; index < count; index++) {
       const port = freePort();
       const output: string[] = [];
+      const errorCounts: Record<string, number> = {};
+      const unavailableCounts: Record<string, number> = {};
       const child = Bun.spawn([process.execPath, 'src/main.ts'], {
         cwd: process.cwd(),
         env: {
@@ -114,10 +138,12 @@ export async function startInstances(count = 3): Promise<Instances> {
         url: `http://127.0.0.1:${port}`,
         process: child,
         output,
+        errorCounts,
+        unavailableCounts,
       };
       all.push(instance);
-      void drain(child.stdout as ReadableStream<Uint8Array>, output);
-      void drain(child.stderr as ReadableStream<Uint8Array>, output);
+      void drain(child.stdout as ReadableStream<Uint8Array>, instance);
+      void drain(child.stderr as ReadableStream<Uint8Array>, instance);
     }
     await Promise.all(all.map((instance) => waitUntilReady(instance)));
   } catch (error) {
@@ -131,16 +157,10 @@ export async function startInstances(count = 3): Promise<Instances> {
     all,
     urls: all.map((instance) => instance.url),
     errorNames() {
-      const counts: Record<string, number> = {};
-      for (const instance of all) {
-        for (const line of instance.output) {
-          // O Nest colore a saída (códigos ANSI) mesmo quando não é um terminal.
-          const plain = line.replace(ANSI_COLOR, '');
-          const name = /error: '(\w+)'/.exec(plain)?.[1];
-          if (name) counts[name] = (counts[name] ?? 0) + 1;
-        }
-      }
-      return counts;
+      return sumCounts(all.map((instance) => instance.errorCounts));
+    },
+    unavailableReasons() {
+      return sumCounts(all.map((instance) => instance.unavailableCounts));
     },
     async stop() {
       killAll();
@@ -148,4 +168,16 @@ export async function startInstances(count = 3): Promise<Instances> {
       process.off('exit', onExit);
     },
   };
+}
+
+function sumCounts(
+  parts: Array<Record<string, number>>,
+): Record<string, number> {
+  const total: Record<string, number> = {};
+  for (const part of parts) {
+    for (const [name, count] of Object.entries(part)) {
+      total[name] = (total[name] ?? 0) + count;
+    }
+  }
+  return total;
 }

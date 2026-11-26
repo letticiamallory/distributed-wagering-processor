@@ -8,11 +8,12 @@ import {
   walletFacts,
 } from '../support/ledger-check.js';
 import { ProviderClient } from '../support/provider-client.js';
+import { rounds } from '../support/rounds.js';
 
 // "A mesma aposta enviada 50 vezes em paralelo -> um único débito" (enunciado, seção 13).
 // Repetido em várias rodadas, cada uma com uma wallet nova. Quem reenvia depois de um 503 usa a
 // MESMA Idempotency-Key, então nada pode contar duas vezes.
-const ROUNDS = 10;
+const ROUNDS = rounds(10);
 const COPIES = 50;
 
 let app: TestApp;
@@ -76,7 +77,7 @@ test(`the same BET ${COPIES} times in parallel: one 201, ${COPIES - 1} replays, 
     errors: countErrorNames(app.logs.at('error')),
   });
 
-  recordMetrics('2 same BET x50, 10 rounds', {
+  recordMetrics(`2 same BET x50, ${ROUNDS} rounds`, {
     requests: client.stats.requests,
     attempts: client.stats.attempts,
     status503: client.stats.status503,
