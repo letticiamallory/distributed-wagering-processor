@@ -43,6 +43,13 @@ resolve quase todos os replays sem travar nada. A mesma checagem se repete **dep
 travar a wallet, porque outra requisição igual pode ter commitado entre as duas. As restrições
 `uq_wtx_idempotency_key` e `uq_wtx_provider_external` são a última barreira.
 
+**A janela entre as duas leituras do caminho rápido.** O caminho rápido lê a chave e, em outra
+consulta, o id externo. A mesma operação pode commitar **entre as duas**: a primeira leitura não
+vê a linha e a segunda vê. Essa linha tem a mesma chave, então é replay, não conflito. Antes de
+lançar `EXTERNAL_ID_CONFLICT`, o caso de uso **relê a chave**: só é conflito se a linha daquele id
+externo é de outra chave. Foi achado por 50 requisições idênticas em paralelo por HTTP (4 recebiam
+409 falso) e tem teste determinístico.
+
 **A corrida que o lock não cobre.** Duas requisições com a mesma chave e `walletId`
 diferente travam wallets diferentes e passam juntas pelas duas checagens. A segunda bloqueia
 no índice único e recebe `23505` quando a primeira commita. O caso de uso captura **só** o
