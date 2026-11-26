@@ -315,11 +315,100 @@ describe('wager_transactions: terminal states', () => {
     await expectViolation(remove(id), 'cannot be deleted');
   });
 
-  // Hoje o trigger NÃO impede PENDING_REFERENCE -> PENDING (só o domínio nunca faz isso). A decisão
-  // (migration 6: recusar qualquer UPDATE que volte a PENDING) está pendente.
-  test.todo(
-    'the schema refuses PENDING_REFERENCE -> PENDING (decision pending: a migration)',
-  );
+  // PENDING só existe dentro da transação SQL do caso de uso e nunca é gravado: quando existe
+  // numa linha, é porque ela nasceu num INSERT. Nenhum UPDATE pode levar a PENDING, de nenhum
+  // estado (nem de PENDING, nem de PENDING_REFERENCE; dos finais o trigger já recusa antes).
+  describe('PENDING exists only on INSERT', () => {
+    const toPending = (id: string) =>
+      sql(
+        `UPDATE wager_transactions SET status = 'PENDING', next_attempt_at = NULL WHERE id = ?`,
+        [id],
+      );
+
+    test('accepts a transaction that is INSERTed as PENDING', async () => {
+      await insertTransaction(await newWallet(), { status: 'PENDING' });
+    });
+
+    test('rejects PENDING_REFERENCE -> PENDING', async () => {
+      const id = await pendingRow();
+      await expectViolation(toPending(id), 'cannot be updated to PENDING');
+    });
+
+    test('rejects an UPDATE of a PENDING row that leaves it PENDING (any column)', async () => {
+      const id = await insertTransaction(await newWallet(), {
+        status: 'PENDING',
+      });
+      await expectViolation(touch(id), 'cannot be updated to PENDING');
+    });
+
+    test.each([
+      ['PROCESSED', processed()],
+      [
+        'REJECTED',
+        {
+          status: 'REJECTED',
+          failure_code: 'INSUFFICIENT_FUNDS',
+          balance_after: '1.00',
+        },
+      ],
+      ['FAILED', { status: 'FAILED', failure_code: 'DEPENDENCY_UNAVAILABLE' }],
+    ])(
+      '%s -> PENDING is still refused (the terminal rule comes first)',
+      async (_from, row) => {
+        const id = await insertTransaction(await newWallet(), row);
+        await expectViolation(
+          sql(
+            `UPDATE wager_transactions SET status = 'PENDING', processed_at = NULL, failure_code = NULL, balance_after = NULL WHERE id = ?`,
+            [id],
+          ),
+          'is terminal',
+        );
+      },
+    );
+
+    test('the refusal changes nothing in the row', async () => {
+      const id = await pendingRow();
+      await toPending(id).catch(() => undefined);
+      const rows = (await sql(
+        'SELECT status, attempts FROM wager_transactions WHERE id = ?',
+        [id],
+      )) as Row[];
+      expect(rows[0]).toMatchObject({
+        status: 'PENDING_REFERENCE',
+        attempts: 1,
+      });
+    });
+
+    test('keeps allowing a PENDING row to move forward: PENDING -> PROCESSED', async () => {
+      const id = await insertTransaction(await newWallet(), {
+        status: 'PENDING',
+      });
+      await sql(
+        `UPDATE wager_transactions
+            SET status = 'PROCESSED', processed_at = now(), balance_after = '90.00'
+          WHERE id = ?`,
+        [id],
+      );
+    });
+
+    test('keeps allowing PENDING -> PENDING_REFERENCE and the retry PENDING_REFERENCE -> PENDING_REFERENCE', async () => {
+      const wallet = await newWallet();
+      const id = await insertTransaction(wallet, {
+        kind: 'REFUND',
+        reference_external_transaction_id: 'ext-original',
+        status: 'PENDING',
+      });
+      await sql(
+        `UPDATE wager_transactions
+            SET status = 'PENDING_REFERENCE', attempts = 1, next_attempt_at = now() WHERE id = ?`,
+        [id],
+      );
+      await sql(
+        `UPDATE wager_transactions SET attempts = 2, next_attempt_at = now() + interval '2 seconds' WHERE id = ?`,
+        [id],
+      );
+    });
+  });
 
   test('allows PENDING_REFERENCE to become PROCESSED, and then locks it', async () => {
     const wallet = await newWallet();
