@@ -14,18 +14,45 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
 
 - Um ROLLBACK de um REFUND continua permitido: a referência dele é o REFUND, não a BET.
   Depois disso, a BET não pode ser reembolsada de novo, porque o REFUND original segue PROCESSED.
-- Regra irmã, no código (`WagerPolicy`): WIN ou LOSS sobre uma BET já revertida é rejeitado
-  com `REFERENCE_ALREADY_REVERSED`, para não pagar prêmio de aposta devolvida.
+- **Regra irmã 1, no código (`WagerPolicy`):** WIN ou LOSS sobre uma BET já revertida é
+  rejeitado com `REFERENCE_ALREADY_REVERSED`, para não pagar prêmio de aposta devolvida.
+- **Regra irmã 2, no código (`WagerPolicy`):** REFUND ou ROLLBACK de uma BET que tem um WIN
+  `PROCESSED` apontando para ela, e ainda não revertido, é rejeitado com `REFERENCE_SETTLED`.
+  Sem isso, o jogador ficaria com o prêmio e com a aposta de volta. É o espelho da regra
+  irmã 1: aquela impede o prêmio de uma aposta devolvida, esta impede devolver uma aposta
+  já premiada.
+  - LOSS não entra: BET + LOSS + REFUND dá zero, porque a LOSS não mexe no saldo.
+  - Se o WIN for revertido (ROLLBACK do WIN `PROCESSED`), a BET volta a poder ser revertida.
+  - Só vale para REFUND e ROLLBACK de uma **BET**. Um ROLLBACK do próprio WIN, ou de um
+    REFUND, não é bloqueado.
+  - A política não consulta o banco: o caso de uso calcula `hasSettledWin` (existe WIN
+    `PROCESSED` com `reference_transaction_id` = BET e sem reversão `PROCESSED` apontando para
+    esse WIN), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
+    depois de `REFERENCE_ALREADY_REVERSED` e antes da checagem de saldo. O código é de
+    negócio, não retentável: o provedor desiste ou reverte o WIN primeiro.
+- **Limite de tentativas com a referência pendente:** cada transação respeita o próprio limite
+  de tentativas (`attemptsExhausted`). Se a referência ainda está em `PENDING_REFERENCE` e as
+  tentativas da reversão acabaram, a política rejeita com `REFERENCE_NOT_PROCESSED` em vez de
+  esperar. Sem isso, a espera dependeria de a outra transação terminar, e o limite de uma
+  passaria a ser o da outra. Se a referência nem existe e as tentativas acabaram, o código é
+  `REFERENCE_NOT_FOUND`.
 
 ## Alternativas consideradas
 - `UNIQUE (reference_transaction_id, kind)`: cumpre o texto do enunciado,
   mas deixa passar REFUND seguido de ROLLBACK.
 - Checar só no código: duas instâncias processando ao mesmo tempo passam pela checagem juntas.
+- Deixar o ROLLBACK de uma BET premiada passar (como o texto do manual permite): o jogador
+  ficaria com o WIN e com a aposta de volta. Fechado pela regra irmã 2.
+- Esperar a referência pendente mesmo com as tentativas esgotadas: o limite de uma transação
+  passaria a depender do limite da outra.
 
 ## Consequências
 + Cumpre o enunciado e fecha o buraco do REFUND + ROLLBACK.
 + Só PROCESSED conta: uma reversão REJECTED ou PENDING_REFERENCE não bloqueia
   uma nova tentativa válida (testado).
 − A regra é mais rígida que o texto do enunciado e precisa ser explicada na apresentação.
+− `REFERENCE_SETTLED` é um código a mais na taxonomia (categoria `business`, não retentável)
+  que o enunciado não prevê; o caso de uso precisa calcular `hasSettledWin` sob o lock da
+  wallet, para duas requisições não decidirem com a mesma foto do banco.
 − O caminho normal é o caso de uso (Fase 3) recusar a segunda reversão como rejeição de negócio;
   o índice é a rede de segurança para bugs e corridas, não o fluxo principal.

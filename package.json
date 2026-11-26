@@ -28,6 +28,7 @@
     "migration:down": "bun --bun run mikro-orm migration:down",
     "migration:create": "bun --bun run mikro-orm migration:create",
     "lint": "oxlint --type-aware src/ test/",
+    "check:money": "bun scripts/check-money.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:cov": "bun test --coverage"
