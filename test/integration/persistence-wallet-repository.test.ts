@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { capture, holding, valueOf } from '../support/concurrency.js';
 import { messageOf, rejectionOf } from '../support/assertions.js';
 import {
   ConcurrentWalletUpdateError,
@@ -112,35 +113,33 @@ describe('WalletRepository: lock', () => {
   test('a second transaction waits for the first one to commit', async () => {
     const wallet = newWallet('50.00');
     await db().uow.run(async (r) => r.wallets.insert(wallet));
-
     const order: string[] = [];
-    let releaseFirst!: () => void;
-    const firstMayFinish = new Promise<void>(
-      (resolve) => (releaseFirst = resolve),
+
+    const { second } = await holding(
+      async ({ locked, until }) => {
+        await db().uow.run(async (r) => {
+          await r.wallets.lockById(wallet.id);
+          order.push('first locked');
+          locked();
+          await until;
+          order.push('first committing');
+        });
+      },
+      async () => {
+        // Capturada: mesmo que uma asserção abaixo falhe, esta promessa nunca fica sem dono.
+        const second = capture(
+          db().uow.run(async (r) => {
+            await r.wallets.lockById(wallet.id);
+            order.push('second locked');
+          }),
+        );
+        await Bun.sleep(300);
+        expect(order).toEqual(['first locked']); // a segunda ainda espera o commit da primeira
+        return { second };
+      },
     );
-    let firstHoldsLock!: () => void;
-    const firstHasLock = new Promise<void>(
-      (resolve) => (firstHoldsLock = resolve),
-    );
 
-    const first = db().uow.run(async (r) => {
-      await r.wallets.lockById(wallet.id);
-      order.push('first locked');
-      firstHoldsLock();
-      await firstMayFinish;
-      order.push('first committing');
-    });
-    await firstHasLock;
-
-    const second = db().uow.run(async (r) => {
-      await r.wallets.lockById(wallet.id);
-      order.push('second locked');
-    });
-    await Bun.sleep(300);
-    expect(order).toEqual(['first locked']);
-
-    releaseFirst();
-    await Promise.all([first, second]);
+    valueOf(await second);
     expect(order).toEqual([
       'first locked',
       'first committing',
@@ -154,25 +153,23 @@ describe('WalletRepository: lock', () => {
       const wallet = newWallet('50.00');
       await short.uow.run(async (r) => r.wallets.insert(wallet));
 
-      let release!: () => void;
-      const hold = new Promise<void>((resolve) => (release = resolve));
-      let locked!: () => void;
-      const hasLock = new Promise<void>((resolve) => (locked = resolve));
-      const first = short.uow.run(async (r) => {
-        await r.wallets.lockById(wallet.id);
-        locked();
-        await hold;
-      });
-      await hasLock;
-
-      const second = short.uow.run(async (r) => r.wallets.lockById(wallet.id));
-      expect(await rejectionOf(second)).toBeInstanceOf(
-        DependencyUnavailableError,
+      await holding(
+        async ({ locked, until }) => {
+          await short.uow.run(async (r) => {
+            await r.wallets.lockById(wallet.id);
+            locked();
+            await until;
+          });
+        },
+        async () => {
+          const error = await rejectionOf(
+            short.uow.run(async (r) => r.wallets.lockById(wallet.id)),
+          );
+          expect(error).toBeInstanceOf(DependencyUnavailableError);
+          expect(error).toMatchObject({ retryable: true });
+        },
       );
-      expect(await rejectionOf(second)).toMatchObject({ retryable: true });
 
-      release();
-      await first;
       // Nada ficou preso: depois que o primeiro soltou, o lock sai de novo.
       expect(
         await short.uow.run(async (r) => r.wallets.lockById(wallet.id)),

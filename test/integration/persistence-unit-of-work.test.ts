@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { holding } from '../support/concurrency.js';
 import { rejectionOf } from '../support/assertions.js';
 import {
   DependencyUnavailableError,
@@ -170,27 +171,25 @@ describe('UnitOfWork: database errors become application errors', () => {
       connectionTimeoutMillis: 300,
     });
     try {
-      let release!: () => void;
-      const hold = new Promise<void>((resolve) => (release = resolve));
-      let busy!: () => void;
-      const isBusy = new Promise<void>((resolve) => (busy = resolve));
-      const occupying = small.uow.run(async (r) => {
-        await r.wallets.lockById(uuid());
-        busy();
-        await hold;
-      });
-      await isBusy;
-
-      const waiting = small.uow.run(async (r) => r.wallets.lockById(uuid()));
-      expect(await rejectionOf(waiting)).toBeInstanceOf(
-        DependencyUnavailableError,
+      await holding(
+        async ({ locked, until }) => {
+          await small.uow.run(async (r) => {
+            await r.wallets.lockById(uuid());
+            locked();
+            await until;
+          });
+        },
+        async () => {
+          const waiting = await rejectionOf(
+            small.uow.run(async (r) => r.wallets.lockById(uuid())),
+          );
+          expect(waiting).toBeInstanceOf(DependencyUnavailableError);
+          expect(
+            await rejectionOf(small.reader.findById(uuid())),
+          ).toBeInstanceOf(DependencyUnavailableError);
+        },
       );
-      expect(await rejectionOf(small.reader.findById(uuid()))).toBeInstanceOf(
-        DependencyUnavailableError,
-      );
 
-      release();
-      await occupying;
       // O pool volta ao normal sozinho.
       expect(await small.reader.findById(uuid())).toBeUndefined();
     } finally {
