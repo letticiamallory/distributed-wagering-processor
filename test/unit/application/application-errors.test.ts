@@ -5,6 +5,7 @@ import {
 } from '../../../src/application/errors/api-error-code.js';
 import {
   ApplicationError,
+  ConcurrentTransactionUpdateError,
   ConcurrentWalletUpdateError,
   DependencyUnavailableError,
   DuplicateKeyError,
@@ -13,6 +14,7 @@ import {
   InboxMessageReusedError,
   InvalidCommandError,
   TransactionNotFoundError,
+  UnresolvedIdempotencyRaceError,
   WalletAlreadyExistsError,
   WalletNotFoundError,
 } from '../../../src/application/errors/application-errors.js';
@@ -77,6 +79,12 @@ describe('application errors', () => {
       false,
     ],
     [
+      'ConcurrentTransactionUpdateError',
+      new ConcurrentTransactionUpdateError('tx-1'),
+      ApiOnlyErrorCode.InternalError,
+      false,
+    ],
+    [
       'DependencyUnavailableError',
       new DependencyUnavailableError('lock timeout'),
       FailureCode.DependencyUnavailable,
@@ -131,6 +139,31 @@ describe('application errors', () => {
     expect(new TransactionNotFoundError('tx-1').message).toContain('tx-1');
     expect(new ConcurrentWalletUpdateError('wallet-1', 3).message).toContain(
       'wallet-1',
+    );
+  });
+
+  test('no error is critical except the unresolved idempotency race (the filter logs only that one at the highest level)', () => {
+    for (const [, error] of cases) {
+      expect(error.critical).toBe(false);
+    }
+  });
+
+  test('UnresolvedIdempotencyRaceError: internal, not retryable, CRITICAL, with the second 23505 as the cause', () => {
+    const cause = new DuplicateKeyError('uq_wtx_provider_external');
+    const error = new UnresolvedIdempotencyRaceError(cause);
+    expect(error).toBeInstanceOf(ApplicationError);
+    expect(error).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      retryable: false,
+      critical: true,
+    });
+    expect(error.cause).toBe(cause);
+    expect(error.message).toContain('uq_wtx_provider_external');
+  });
+
+  test('ConcurrentTransactionUpdateError says which transaction was not in the expected state', () => {
+    expect(new ConcurrentTransactionUpdateError('tx-1').message).toContain(
+      'tx-1',
     );
   });
 

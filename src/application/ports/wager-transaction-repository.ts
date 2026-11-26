@@ -25,11 +25,20 @@ export abstract class WagerTransactionRepository extends WagerTransactionReader 
   // Esta BET tem um WIN PROCESSED apontando para ela, sem reversão PROCESSED desse WIN?
   abstract hasSettledWin(betTransactionId: string): Promise<boolean>;
 
-  // "Acorda" as PENDING_REFERENCE que esperam por esta referência: next_attempt_at = at.
-  // Busca por (provedor, id externo da referência), porque uma PENDING_REFERENCE ainda não
-  // tem reference_transaction_id. Devolve quantas acordou.
+  // Grava o novo estado de uma transação que ESTAVA em PENDING_REFERENCE (outra tentativa, ou o
+  // estado final). Só as colunas que mudam com o estado; o que o provedor mandou nunca é
+  // reescrito. Se a linha não existe ou já não está em PENDING_REFERENCE, lança
+  // ConcurrentTransactionUpdateError: com o lock da wallet isso é bug.
+  abstract update(transaction: WagerTransaction): Promise<void>;
+
+  // "Acorda" as PENDING_REFERENCE desta WALLET que esperam por esta referência:
+  // next_attempt_at = at. Busca por (provedor, id externo da referência), porque uma
+  // PENDING_REFERENCE ainda não tem reference_transaction_id. Só a mesma wallet: é um caso da
+  // regra do ADR-0007 (toda gravação em wager_transactions de uma wallet acontece com o lock
+  // dela, e quem chama já o tem). Devolve quantas acordou.
   abstract wakePendingReferences(
     providerId: string,
+    walletId: string,
     referenceExternalTransactionId: string,
     at: Date,
   ): Promise<number>;

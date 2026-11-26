@@ -7,6 +7,8 @@ import { ApiOnlyErrorCode, type ApiErrorCode } from './api-error-code.js';
 export abstract class ApplicationError extends Error {
   abstract readonly code: ApiErrorCode;
   readonly retryable: boolean = false;
+  // Erro que nunca deveria acontecer e que merece o log mais alto (o filtro HTTP a lê).
+  readonly critical: boolean = false;
 
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -132,6 +134,30 @@ export class ConcurrentWalletUpdateError extends ApplicationError {
   ) {
     super(
       `Wallet ${walletId} was not at version ${expectedVersion} when it was saved`,
+    );
+  }
+}
+
+// Uma transação pendente que se esperava em PENDING_REFERENCE já não está (ou não existe): outra
+// instância a resolveu entre a leitura e a gravação. Com o lock da wallet isto não acontece, então é bug (500).
+export class ConcurrentTransactionUpdateError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(readonly transactionId: string) {
+    super(
+      `Transaction ${transactionId} was not PENDING_REFERENCE when it was updated`,
+    );
+  }
+}
+
+// A corrida do 23505 (mesma chave ou mesmo id externo vindo de wallets diferentes) deveria ser
+// resolvida pela reexecução. Se a reexecução TAMBÉM bate no 23505, é bug: 500 e log crítico.
+export class UnresolvedIdempotencyRaceError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  override readonly critical = true;
+  constructor(cause: DuplicateKeyError) {
+    super(
+      `The idempotency race was not settled by the rerun (constraint ${cause.constraint})`,
+      { cause },
     );
   }
 }

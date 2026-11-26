@@ -1,4 +1,4 @@
-import { describe, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { expectViolation } from '../support/assertions.js';
 import { useSql } from '../support/database.js';
 import { createFixtures, type Row } from '../support/fixtures.js';
@@ -230,6 +230,96 @@ describe('wager_transactions: terminal states', () => {
     const id = await insertTransaction(await newWallet());
     await expectViolation(remove(id), 'cannot be deleted');
   });
+
+  // O trigger trava a partir de um estado FINAL: de PENDING_REFERENCE se pode ir para qualquer
+  // outro estado (o que o worker faz), e de PROCESSED, REJECTED e FAILED não se vai para lugar nenhum.
+  const pendingRow = async () => {
+    const wallet = await newWallet();
+    return insertTransaction(wallet, {
+      kind: 'REFUND',
+      reference_external_transaction_id: 'ext-original',
+      status: 'PENDING_REFERENCE',
+      attempts: 1,
+      next_attempt_at: new Date().toISOString(),
+    });
+  };
+
+  test('allows PENDING_REFERENCE to stay PENDING_REFERENCE with more attempts and a later next_attempt_at (a retry)', async () => {
+    const id = await pendingRow();
+    await sql(
+      `UPDATE wager_transactions SET attempts = 2, next_attempt_at = now() + interval '2 seconds' WHERE id = ?`,
+      [id],
+    );
+    await sql(
+      `UPDATE wager_transactions SET attempts = 3, next_attempt_at = now() + interval '4 seconds' WHERE id = ?`,
+      [id],
+    );
+    const [row] = (await sql(
+      'SELECT status, attempts FROM wager_transactions WHERE id = ?',
+      [id],
+    )) as Array<{ status: string; attempts: number }>;
+    expect(row).toMatchObject({ status: 'PENDING_REFERENCE', attempts: 3 });
+  });
+
+  test('allows PENDING_REFERENCE to become REJECTED (REFERENCE_NOT_FOUND), and then locks it', async () => {
+    const id = await pendingRow();
+    await sql(
+      `UPDATE wager_transactions
+          SET status = 'REJECTED', failure_code = 'REFERENCE_NOT_FOUND', balance_after = '90.00', next_attempt_at = NULL
+        WHERE id = ?`,
+      [id],
+    );
+    await expectViolation(touch(id), 'is terminal');
+  });
+
+  test('allows PENDING_REFERENCE to become FAILED, and then locks it', async () => {
+    const id = await pendingRow();
+    await sql(
+      `UPDATE wager_transactions
+          SET status = 'FAILED', failure_code = 'DEPENDENCY_UNAVAILABLE', next_attempt_at = NULL
+        WHERE id = ?`,
+      [id],
+    );
+    await expectViolation(touch(id), 'is terminal');
+  });
+
+  test.each([
+    ['PROCESSED', "status = 'REJECTED', failure_code = 'REFERENCE_NOT_FOUND'"],
+    ['REJECTED', "status = 'PROCESSED', processed_at = now()"],
+    ['FAILED', "status = 'PENDING_REFERENCE', next_attempt_at = now()"],
+  ])(
+    'a %s transaction cannot move to ANY other state, not even a "valid" one',
+    async (from, change) => {
+      const wallet = await newWallet();
+      const id = await insertTransaction(
+        wallet,
+        from === 'PROCESSED'
+          ? processed()
+          : from === 'REJECTED'
+            ? {
+                status: 'REJECTED',
+                failure_code: 'INSUFFICIENT_FUNDS',
+                balance_after: '1.00',
+              }
+            : { status: 'FAILED', failure_code: 'DEPENDENCY_UNAVAILABLE' },
+      );
+      await expectViolation(
+        sql(`UPDATE wager_transactions SET ${change} WHERE id = ?`, [id]),
+        'is terminal',
+      );
+    },
+  );
+
+  test('rejects DELETE of a PENDING_REFERENCE transaction too', async () => {
+    const id = await pendingRow();
+    await expectViolation(remove(id), 'cannot be deleted');
+  });
+
+  // Hoje o trigger NÃO impede PENDING_REFERENCE -> PENDING (só o domínio nunca faz isso). A decisão
+  // (migration 6: recusar qualquer UPDATE que volte a PENDING) está pendente.
+  test.todo(
+    'the schema refuses PENDING_REFERENCE -> PENDING (decision pending: a migration)',
+  );
 
   test('allows PENDING_REFERENCE to become PROCESSED, and then locks it', async () => {
     const wallet = await newWallet();

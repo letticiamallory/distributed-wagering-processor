@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { rejectionOf } from '../support/assertions.js';
-import { DuplicateKeyError } from '../../src/application/errors/application-errors.js';
+import {
+  ConcurrentTransactionUpdateError,
+  DuplicateKeyError,
+} from '../../src/application/errors/application-errors.js';
 import { FailureCode } from '../../src/domain/errors/failure-code.js';
 import { WagerTransactionKind } from '../../src/domain/wager/wager-transaction-kind.js';
 import { WagerTransactionStatus } from '../../src/domain/wager/wager-transaction-status.js';
-import type { WagerTransaction } from '../../src/domain/wager/wager-transaction.js';
+import { WagerTransaction } from '../../src/domain/wager/wager-transaction.js';
 import type { Wallet } from '../../src/domain/wallet/wallet.js';
 import {
   brl,
@@ -506,9 +509,16 @@ describe('WagerTransactionRepository: wakePendingReferences', () => {
     return tx;
   }
 
-  const wake = (provider: string, reference: string, at: Date) =>
+  // O acordar é por wallet: só mexe nas pendentes da MESMA wallet (ADR-0007: toda gravação em
+  // wager_transactions de uma wallet acontece com o lock dela).
+  const wake = (
+    provider: string,
+    walletId: string,
+    reference: string,
+    at: Date,
+  ) =>
     db().uow.run(async (r) =>
-      r.transactions.wakePendingReferences(provider, reference, at),
+      r.transactions.wakePendingReferences(provider, walletId, reference, at),
     );
 
   test('brings forward the ones waiting for THAT reference, and says how many', async () => {
@@ -517,7 +527,7 @@ describe('WagerTransactionRepository: wakePendingReferences', () => {
     const a = await pending(wallet, reference);
     const b = await pending(wallet, reference);
 
-    expect(await wake('provider-a', reference, T2)).toBe(2);
+    expect(await wake('provider-a', wallet.id, reference, T2)).toBe(2);
 
     for (const tx of [a, b]) {
       const loaded = await db().reader.findById(tx.id);
@@ -533,7 +543,7 @@ describe('WagerTransactionRepository: wakePendingReferences', () => {
     const theirs = `ref-${uuid()}`;
     await pending(wallet, mine);
     const other = await pending(wallet, theirs);
-    await wake('provider-a', mine, T2);
+    await wake('provider-a', wallet.id, mine, T2);
     const loaded = await db().reader.findById(other.id);
     expect(loaded?.nextAttemptAt?.toISOString()).toBe(
       '2030-01-01T00:00:00.000Z',
@@ -546,7 +556,7 @@ describe('WagerTransactionRepository: wakePendingReferences', () => {
     const other = await pending(wallet, reference, {
       providerId: 'provider-b',
     });
-    expect(await wake('provider-a', reference, T2)).toBe(0);
+    expect(await wake('provider-a', wallet.id, reference, T2)).toBe(0);
     const loaded = await db().reader.findById(other.id);
     expect(loaded?.nextAttemptAt?.toISOString()).toBe(
       '2030-01-01T00:00:00.000Z',
@@ -562,13 +572,177 @@ describe('WagerTransactionRepository: wakePendingReferences', () => {
     });
     done.reject(FailureCode.ReferenceNotFound, brl('10.00'));
     await insert(done);
-    expect(await wake('provider-a', reference, T2)).toBe(0);
+    expect(await wake('provider-a', wallet.id, reference, T2)).toBe(0);
     expect((await db().reader.findById(done.id))?.status).toBe(
       WagerTransactionStatus.Rejected,
     );
   });
 
   test('returns 0 when nobody is waiting', async () => {
-    expect(await wake('provider-a', `ref-${uuid()}`, T2)).toBe(0);
+    expect(await wake('provider-a', uuid(), `ref-${uuid()}`, T2)).toBe(0);
+  });
+
+  test('leaves alone the pending ones of ANOTHER wallet that wait for the same external id', async () => {
+    const mine = await walletInDb();
+    const theirs = await walletInDb();
+    const reference = `ref-${uuid()}`;
+    const mineWaiting = await pending(mine, reference);
+    const theirsWaiting = await pending(theirs, reference);
+
+    expect(await wake('provider-a', mine.id, reference, T2)).toBe(1);
+
+    expect(
+      (
+        await db().reader.findById(mineWaiting.id)
+      )?.nextAttemptAt?.toISOString(),
+    ).toBe(T2.toISOString());
+    expect(
+      (
+        await db().reader.findById(theirsWaiting.id)
+      )?.nextAttemptAt?.toISOString(),
+    ).toBe('2030-01-01T00:00:00.000Z');
+  });
+});
+
+describe('WagerTransactionRepository: update (a pending transaction moving on)', () => {
+  async function pendingRow(
+    attemptsAlreadyMade = 1,
+  ): Promise<{ wallet: Wallet; tx: WagerTransaction }> {
+    const wallet = await walletInDb();
+    const tx = newTransaction(wallet, {
+      kind: K.Refund,
+      referenceExternalTransactionId: `ref-${uuid()}`,
+    });
+    for (let i = 0; i < attemptsAlreadyMade; i++) {
+      tx.markPendingReference(new Date('2030-01-01T00:00:00.000Z'));
+    }
+    await insert(tx);
+    return { wallet, tx };
+  }
+  const update = (tx: WagerTransaction) =>
+    db().uow.run(async (r) => r.transactions.update(tx));
+
+  test('waiting again keeps the new attempts and the new next_attempt_at, still PENDING_REFERENCE', async () => {
+    const { tx } = await pendingRow();
+    const loaded = (await db().reader.findById(tx.id)) as WagerTransaction;
+    loaded.markPendingReference(new Date('2030-02-02T00:00:00.000Z'));
+
+    await update(loaded);
+
+    const after = await db().reader.findById(tx.id);
+    expect(after?.status).toBe(WagerTransactionStatus.PendingReference);
+    expect(after?.attempts).toBe(2);
+    expect(after?.nextAttemptAt?.toISOString()).toBe(
+      '2030-02-02T00:00:00.000Z',
+    );
+  });
+
+  test('becoming PROCESSED keeps the resolved reference, the wallet balance, processed_at, and clears next_attempt_at', async () => {
+    const { wallet, tx } = await pendingRow();
+    const bet = processed(newTransaction(wallet));
+    await insert(bet);
+    const loaded = (await db().reader.findById(tx.id)) as WagerTransaction;
+    loaded.markProcessed({
+      referenceTransactionId: bet.id,
+      balanceAfter: brl('100.00'),
+      at: T2,
+    });
+
+    await update(loaded);
+
+    const after = await db().reader.findById(tx.id);
+    expect(after?.status).toBe(WagerTransactionStatus.Processed);
+    expect(after?.referenceTransactionId).toBe(bet.id);
+    expect(after?.balanceAfter?.toJSON()).toEqual({
+      amount: '100.00',
+      currency: 'BRL',
+    });
+    expect(after?.processedAt?.toISOString()).toBe(T2.toISOString());
+    expect(after?.nextAttemptAt).toBeUndefined();
+    expect(after?.attempts).toBe(1);
+  });
+
+  test('becoming REJECTED keeps the failure code and the wallet balance, and clears next_attempt_at', async () => {
+    const { tx } = await pendingRow();
+    const loaded = (await db().reader.findById(tx.id)) as WagerTransaction;
+    loaded.reject(FailureCode.ReferenceNotFound, brl('90.00'));
+
+    await update(loaded);
+
+    const after = await db().reader.findById(tx.id);
+    expect(after?.status).toBe(WagerTransactionStatus.Rejected);
+    expect(after?.failureCode).toBe(FailureCode.ReferenceNotFound);
+    expect(after?.balanceAfter?.toJSON().amount).toBe('90.00');
+    expect(after?.nextAttemptAt).toBeUndefined();
+  });
+
+  test('only the columns that can change are written: what the provider sent is untouched', async () => {
+    const { wallet, tx } = await pendingRow();
+    const loaded = (await db().reader.findById(tx.id)) as WagerTransaction;
+    // Um objeto "adulterado" com o mesmo id: outro valor, outro tipo. Só o estado pode mudar.
+    const tampered = WagerTransaction.rehydrate({
+      id: loaded.id,
+      providerId: 'someone-else',
+      externalTransactionId: 'ext-tampered',
+      idempotencyKey: 'key-tampered',
+      payloadHash: 'f'.repeat(64),
+      walletId: loaded.walletId,
+      playerId: loaded.playerId,
+      roundId: 'round-tampered',
+      gameId: 'game-tampered',
+      kind: K.Win,
+      money: brl('999.00'),
+      correlationId: 'tampered',
+      createdAt: T2,
+      status: WagerTransactionStatus.PendingReference,
+      attempts: 2,
+      nextAttemptAt: T2,
+    });
+
+    await update(tampered);
+
+    const row = (await db()
+      .orm.em.getConnection()
+      .execute('SELECT * FROM wager_transactions WHERE id = ?', [
+        tx.id,
+      ])) as Array<Record<string, unknown>>;
+    expect(row[0]).toMatchObject({
+      provider_id: 'provider-a',
+      external_transaction_id: tx.externalTransactionId,
+      idempotency_key: tx.idempotencyKey,
+      payload_hash: tx.payloadHash,
+      wallet_id: wallet.id,
+      round_id: 'round-1',
+      kind: 'REFUND',
+      amount: '25.00',
+      attempts: 2, // o estado SIM mudou
+    });
+  });
+
+  test('a transaction that is already FINAL is not updated (ConcurrentTransactionUpdateError, zero rows)', async () => {
+    const wallet = await walletInDb();
+    const done = processed(newTransaction(wallet));
+    await insert(done);
+    const loaded = (await db().reader.findById(done.id)) as WagerTransaction;
+
+    const error = await rejectionOf(update(loaded));
+
+    expect(error).toBeInstanceOf(ConcurrentTransactionUpdateError);
+    expect(error).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      transactionId: done.id,
+    });
+  });
+
+  test('a transaction that does not exist is the same error', async () => {
+    const wallet = await walletInDb();
+    const ghost = newTransaction(wallet, {
+      kind: K.Refund,
+      referenceExternalTransactionId: 'x',
+    });
+    ghost.markPendingReference(T2);
+    expect(await rejectionOf(update(ghost))).toBeInstanceOf(
+      ConcurrentTransactionUpdateError,
+    );
   });
 });

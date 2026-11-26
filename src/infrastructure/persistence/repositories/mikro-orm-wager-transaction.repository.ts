@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
+import { ConcurrentTransactionUpdateError } from '../../../application/errors/application-errors.js';
 import { WagerTransactionRepository } from '../../../application/ports/wager-transaction-repository.js';
 import type { WagerTransaction } from '../../../domain/wager/wager-transaction.js';
 import { WagerTransactionEntity } from '../entities.js';
@@ -32,6 +33,29 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
   // como erro do driver e o UnitOfWork a traduz para DuplicateKeyError.
   async insert(transaction: WagerTransaction): Promise<void> {
     await this.em.insert(WagerTransactionEntity, transactionToRow(transaction));
+  }
+
+  // Só o que o estado muda: status, tentativas, próximo horário, código de falha, saldo da época,
+  // referência resolvida e processed_at. A guarda `status = PENDING_REFERENCE` faz o UPDATE
+  // não afetar nenhuma linha se outra instância já resolveu a transação.
+  async update(transaction: WagerTransaction): Promise<void> {
+    const row = transactionToRow(transaction);
+    const affected = await this.em.nativeUpdate(
+      WagerTransactionEntity,
+      { id: transaction.id, status: 'PENDING_REFERENCE' },
+      {
+        status: row.status,
+        attempts: row.attempts,
+        nextAttemptAt: row.nextAttemptAt,
+        failureCode: row.failureCode,
+        balanceAfter: row.balanceAfter,
+        referenceTransactionId: row.referenceTransactionId,
+        processedAt: row.processedAt,
+      },
+    );
+    if (affected !== 1) {
+      throw new ConcurrentTransactionUpdateError(transaction.id);
+    }
   }
 
   async hasProcessedReversal(transactionId: string): Promise<boolean> {
@@ -69,9 +93,11 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
   }
 
   // Busca por (provedor, id EXTERNO da referência): uma PENDING_REFERENCE ainda não tem
-  // reference_transaction_id. Só mexe nas que estão esperando; as finais o trigger recusaria.
+  // reference_transaction_id. Só mexe nas que estão esperando (as finais o trigger recusaria) e
+  // só nas da MESMA wallet, que quem chama já travou (ADR-0007).
   wakePendingReferences(
     providerId: string,
+    walletId: string,
     referenceExternalTransactionId: string,
     at: Date,
   ): Promise<number> {
@@ -79,6 +105,7 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
       WagerTransactionEntity,
       {
         providerId,
+        walletId,
         referenceExternalTransactionId,
         status: 'PENDING_REFERENCE',
       },
