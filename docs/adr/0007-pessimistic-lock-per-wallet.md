@@ -19,13 +19,23 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 - **Uma wallet por transação.** O caso de uso trava só a wallet da operação, então duas
   transações nunca esperam uma pela outra em ciclo: não há deadlock por desenho. A referência
   de uma reversão é lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
-  **toda gravação em `wager_transactions` de uma wallet acontece com o lock dessa wallet**,
-  inclusive a do worker de `PENDING_REFERENCE` (Fase 5). Como a referência pertence à mesma
+  **toda decisão de estado ou de dinheiro acontece sob o lock da wallet; colunas só de
+  agendamento (`next_attempt_at`) podem ser escritas sem ele, porque toda decisão relê sob o
+  lock**. Isso vale inclusive para o worker de `PENDING_REFERENCE` (Fase 6, ADR-0013). Como a referência pertence à mesma
   wallet, quem tem o lock a vê estável: ninguém pode mudá-la enquanto a decisão é tomada. Se
   ela pertencer a outra wallet, nada a protege, mas a política a recusa com
   `REFERENCE_MISMATCH` antes de usar o que leu. Quem quebrar essa regra (gravar numa wallet
   sem o lock dela) quebra o ADR.
-  Dois casos já seguem a regra, e os dois escrevem em `wager_transactions` de uma wallet:
+  **A exceção que a regra já prevê, e só ela:** a **reserva** do worker de pendentes
+  (`UPDATE wager_transactions SET next_attempt_at = agora + lease ... FOR UPDATE SKIP LOCKED`)
+  roda sem o lock da wallet porque escreve **só a coluna de agendamento**. Ela nunca muda
+  `status`, `attempts`, saldo, ledger ou qualquer coisa que decida estado ou dinheiro, e quem
+  decide (`ResolvePendingReferenceUseCase`) trava a wallet e **relê tudo** antes. O pior que a
+  reserva pode causar (um lease que sobrescreve um acordar, ou o contrário) é trabalho repetido,
+  nunca um estado errado: o segundo a chegar lê `NOT_PENDING`. O `SKIP LOCKED` faz a reserva pular
+  as linhas que o acordar (que roda SOB o lock da wallet) está atualizando, então não há espera
+  nem deadlock entre os dois. Há um teste que prova que a reserva muda só `next_attempt_at`.
+  Dois casos seguem a regra, e os dois escrevem em `wager_transactions` de uma wallet:
   1. **Resolver uma PENDING_REFERENCE** (`ResolvePendingReferenceUseCase`) trava a wallet da
      transação pendente, **relê a pendente sob o lock** (outro worker pode tê-la resolvido
      entre a primeira leitura e o lock) e só então decide e grava.

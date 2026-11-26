@@ -13,3 +13,5 @@ Uma decisão por arquivo, numeração sequencial e nunca reaproveitada. Para mud
 | [0009](0009-http-status-map-and-error-format.md) | Mapa de status HTTP, formato único de erro e taxonomia de `failureCode` | Aceito |
 | [0010](0010-authentication-deferred-with-extension-point.md) | Autenticação adiada, com ponto de extensão | Aceito |
 | [0011](0011-sqs-consumer-error-classification-retry-and-dlq.md) | Consumidor SQS: classificação de erros, retry com backoff e DLQ | Aceito |
+| [0012](0012-outbox-publisher-skip-locked-at-least-once.md) | Publisher da outbox: `SKIP LOCKED`, entrega at-least-once | Aceito |
+| [0013](0013-pending-reference-worker-and-retry-policy.md) | Worker de `PENDING_REFERENCE` e a política de retentativa | Aceito |
