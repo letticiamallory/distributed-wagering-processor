@@ -25,6 +25,15 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
   ela pertencer a outra wallet, nada a protege, mas a política a recusa com
   `REFERENCE_MISMATCH` antes de usar o que leu. Quem quebrar essa regra (gravar numa wallet
   sem o lock dela) quebra o ADR.
+  Dois casos já seguem a regra, e os dois escrevem em `wager_transactions` de uma wallet:
+  1. **Resolver uma PENDING_REFERENCE** (`ResolvePendingReferenceUseCase`) trava a wallet da
+     transação pendente, **relê a pendente sob o lock** (outro worker pode tê-la resolvido
+     entre a primeira leitura e o lock) e só então decide e grava.
+  2. **Acordar as pendentes** quando a referência é processada
+     (`wakePendingReferences(provider, walletId, referência, agora)`) é um UPDATE em
+     `wager_transactions`: por isso filtra pela **mesma wallet** que quem chama já travou.
+     Uma pendente de outra wallet que espera o mesmo id externo **não** é acordada, porque não
+     temos o lock dela; ela tenta no próprio backoff e vira `REFERENCE_MISMATCH` na vez dela.
 - **Duas barreiras atrás do lock**, para o caso de um bug no código:
   `UPDATE wallets ... WHERE id = $1 AND version = $esperada` precisa afetar exatamente 1 linha,
   e `CHECK (balance >= 0)` recusa o saldo negativo no banco (ADR-0004).

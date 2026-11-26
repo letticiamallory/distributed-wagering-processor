@@ -1,6 +1,6 @@
 # ADR-0008: Idempotência em duas camadas e algoritmo do `payloadHash`
 
-Status: Proposto · Data: 2026-11-25
+Status: Aceito · Data: 2026-11-25 (aceito em 2026-11-27, com a corrida do 23505 e o hash igual entre HTTP e SQS testados)
 
 ## Contexto
 O provedor reenvia: o HTTP dá timeout, o SQS entrega pelo menos uma vez, a aplicação cai
