@@ -39,5 +39,7 @@ import { WagerTransactionsController } from './wager-transactions.controller.js'
       ],
     },
   ],
+  // O consumidor SQS usa o MESMO caso de uso do HTTP (enunciado, seção 10).
+  exports: [ProcessWagerTransactionUseCase],
 })
 export class WageringModule {}

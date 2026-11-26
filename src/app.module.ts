@@ -10,6 +10,7 @@ import { correlationIdMiddleware } from './interfaces/http/correlation-id.js';
 import { HealthModule } from './interfaces/http/health/health.module.js';
 import { HttpConfig, loadHttpConfig } from './interfaces/http/http-config.js';
 import { HttpExceptionFilter } from './interfaces/http/http-exception.filter.js';
+import { SqsConsumerModule } from './interfaces/sqs/sqs-consumer.module.js';
 import { WageringModule } from './interfaces/http/wagering/wagering.module.js';
 import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
 
@@ -20,6 +21,7 @@ import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
     HealthModule,
     WalletsModule,
     WageringModule,
+    SqsConsumerModule,
   ],
   providers: [
     { provide: HttpConfig, useFactory: () => loadHttpConfig() },
