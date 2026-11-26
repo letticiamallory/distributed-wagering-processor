@@ -6,6 +6,10 @@ export const ApiOnlyErrorCode = {
   WalletAlreadyExists: 'WALLET_ALREADY_EXISTS',
   TransactionNotFound: 'TRANSACTION_NOT_FOUND',
   InternalError: 'INTERNAL_ERROR',
+  // Autenticação (ADR-0010): quem chama não foi identificado (401), ou foi e não pode agir como
+  // o provedor que o corpo diz (403).
+  Unauthenticated: 'UNAUTHENTICATED',
+  ProviderForbidden: 'PROVIDER_FORBIDDEN',
 } as const;
 
 export type ApiOnlyErrorCode =

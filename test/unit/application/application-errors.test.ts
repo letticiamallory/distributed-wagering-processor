@@ -14,6 +14,8 @@ import {
   InboxMessageReusedError,
   InvalidCommandError,
   TransactionNotFoundError,
+  UnauthenticatedError,
+  ProviderForbiddenError,
   UnresolvedIdempotencyRaceError,
   WalletAlreadyExistsError,
   WalletNotFoundError,
@@ -28,7 +30,9 @@ describe('API error codes', () => {
     }
     expect(Object.values(ApiOnlyErrorCode).sort()).toEqual([
       'INTERNAL_ERROR',
+      'PROVIDER_FORBIDDEN',
       'TRANSACTION_NOT_FOUND',
+      'UNAUTHENTICATED',
       'WALLET_ALREADY_EXISTS',
     ]);
   });
@@ -76,6 +80,18 @@ describe('application errors', () => {
       'InboxMessageReusedError',
       new InboxMessageReusedError('wager-transactions-consumer', 'msg-1'),
       ApiOnlyErrorCode.InternalError,
+      false,
+    ],
+    [
+      'UnauthenticatedError',
+      new UnauthenticatedError(),
+      ApiOnlyErrorCode.Unauthenticated,
+      false,
+    ],
+    [
+      'ProviderForbiddenError',
+      new ProviderForbiddenError('provider-b'),
+      ApiOnlyErrorCode.ProviderForbidden,
       false,
     ],
     [

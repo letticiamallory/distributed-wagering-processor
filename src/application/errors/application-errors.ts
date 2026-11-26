@@ -93,6 +93,23 @@ export class WalletAlreadyExistsError extends ApplicationError {
   }
 }
 
+// A requisição não trouxe uma credencial válida (401). A mensagem não diz POR QUÊ (ausente,
+// expirada, assinatura ruim): quem testa credenciais não ganha pista.
+export class UnauthenticatedError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.Unauthenticated;
+  constructor(cause?: unknown) {
+    super('Authentication is required', { cause });
+  }
+}
+
+// O chamador foi identificado, mas o provedor do corpo não é um dos dele (403).
+export class ProviderForbiddenError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.ProviderForbidden;
+  constructor(readonly providerId: string) {
+    super('The credential cannot act as the provider of this request');
+  }
+}
+
 // Consulta por uma transação que não existe (404).
 export class TransactionNotFoundError extends ApplicationError {
   readonly code = ApiOnlyErrorCode.TransactionNotFound;
