@@ -8,3 +8,5 @@ Uma decisão por arquivo, numeração sequencial e nunca reaproveitada. Para mud
 | [0004](0004-schema-level-guarantees.md) | Garantias no schema (constraints e triggers) | Aceito |
 | [0005](0005-single-reversal-per-transaction.md) | Reversão única por transação, de qualquer tipo | Aceito |
 | [0006](0006-money-with-decimal-without-rounding.md) | Money com Decimal, sem arredondamento | Aceito |
+| [0007](0007-pessimistic-lock-per-wallet.md) | Lock pessimista por wallet | Proposto |
+| [0008](0008-two-layer-idempotency-and-payload-hash.md) | Idempotência em duas camadas e algoritmo do `payloadHash` | Proposto |
