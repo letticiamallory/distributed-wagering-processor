@@ -93,16 +93,34 @@ describe('WagerTransactionRepository: round trip of every final state', () => {
     expect(loaded?.processedAt).toBeUndefined();
   });
 
-  test('a rejection in ANOTHER currency is stored as the provider sent it (no currency FK, ADR-0004)', async () => {
-    const wallet = await walletInDb();
-    const tx = newTransaction(wallet, {
-      money: usd('25.00'),
-    });
-    tx.reject(FailureCode.CurrencyMismatch, usd('0.00'));
+  test('a rejection in ANOTHER currency keeps the provider money and the WALLET balance in the wallet currency (ADR-0006)', async () => {
+    const wallet = await walletInDb('100.00'); // wallet em BRL
+    const tx = newTransaction(wallet, { money: usd('25.00') });
+    tx.reject(FailureCode.CurrencyMismatch, brl('100.00'));
     await insert(tx);
+
     const loaded = await db().reader.findById(tx.id);
-    expect(loaded?.money.currency).toBe('USD');
+
     expect(loaded?.failureCode).toBe(FailureCode.CurrencyMismatch);
+    // O que o provedor mandou continua como veio (sem FK de moeda, ADR-0004)...
+    expect(loaded?.money.toJSON()).toEqual({
+      amount: '25.00',
+      currency: 'USD',
+    });
+    // ...e o saldo observado é o da wallet, com a moeda DA WALLET, não a da transação.
+    expect(loaded?.balanceAfter?.toJSON()).toEqual({
+      amount: '100.00',
+      currency: 'BRL',
+    });
+  });
+
+  test('balance_after always carries the wallet currency, also when it equals the transaction one', async () => {
+    const wallet = await walletInDb('100.00');
+    const done = processed(newTransaction(wallet));
+    await insert(done);
+    const loaded = await db().reader.findById(done.id);
+    expect(loaded?.balanceAfter?.currency).toBe('BRL');
+    expect(loaded?.money.currency).toBe('BRL');
   });
 
   test('PENDING_REFERENCE keeps attempts, nextAttemptAt and the external reference', async () => {

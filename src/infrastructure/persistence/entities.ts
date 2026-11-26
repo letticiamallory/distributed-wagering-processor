@@ -42,6 +42,15 @@ export const WagerTransactionEntity = defineEntity({
     referenceTransactionId: p.uuid().nullable(),
     status: p.string(),
     failureCode: p.string().nullable(),
+    // O saldo observado é o da WALLET, na moeda da wallet (ADR-0006). A coluna é NUMERIC sem
+    // moeda; a moeda vem da wallet (imutável), lida junto por esta fórmula. Só leitura: o
+    // INSERT ignora esta propriedade.
+    walletCurrency: p
+      .string()
+      .formula(
+        (_columns, table) =>
+          `(select w.currency from wallets w where w.id = ${table.alias}.wallet_id)`,
+      ),
     balanceAfter: p.decimal('string').nullable(),
     attempts: p.integer(),
     nextAttemptAt: p.datetime().nullable(),

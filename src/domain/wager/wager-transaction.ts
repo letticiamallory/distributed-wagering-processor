@@ -32,7 +32,7 @@ export interface WagerTransactionState extends CreateWagerTransactionProps {
   referenceTransactionId?: string; // id interno, preenchido quando a referência é resolvida
   failureCode?: FailureCode;
   processedAt?: Date;
-  balanceAfter?: Money; // saldo observado, devolvido no replay
+  balanceAfter?: Money; // saldo da WALLET na época, na moeda da wallet; devolvido no replay
   attempts: number;
   nextAttemptAt?: Date; // só faz sentido em PENDING_REFERENCE
 }
@@ -326,12 +326,11 @@ export class WagerTransaction {
     }
   }
 
+  // O saldo observado é SEMPRE o saldo da wallet, na moeda da wallet (ADR-0006), e não na
+  // moeda da transação: elas coincidem, exceto quando o provedor manda outra moeda e a
+  // transação é rejeitada com CURRENCY_MISMATCH. A transação não conhece a moeda da wallet,
+  // então o único limite aqui é o saldo não ser negativo.
   private assertObservedBalance(balance: Money): void {
-    if (balance.currency !== this.money.currency) {
-      throw new InvalidWagerTransactionError(
-        `The observed balance is in ${balance.currency}, the transaction in ${this.money.currency}`,
-      );
-    }
     if (balance.isNegative()) {
       throw new InvalidWagerTransactionError(
         'The observed balance cannot be negative',

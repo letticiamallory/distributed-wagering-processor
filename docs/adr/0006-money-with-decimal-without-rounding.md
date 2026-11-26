@@ -18,11 +18,22 @@ Três cuidados, todos no código e todos com teste:
 1. **Validar a string antes de criar o Decimal.** O `decimal.js` aceita `"1e5"`, `"NaN"` e
    `"Infinity"`. A regex `^(0|[1-9][0-9]{0,15})\.[0-9]{2}$` roda primeiro, então só entram
    valores como `"25.00"`: sem espaço, sem notação científica, sem sinal, com 2 casas exatas.
-2. **Nunca arredondar.** Mais de 2 casas é erro (`"10.005"` não vira `"10.01"`): um valor que o
-   provedor não mandou não pode virar dinheiro de alguém. A saída usa `toFixed(2)`, nunca
+2. **Nunca arredondar, nem completar.** A escala é fixa, então 2 casas exatas: mais de 2 é erro
+   (`"10.005"` não vira `"10.01"`) e menos de 2 também (`"10.5"` não vira `"10.50"`; o
+   contrato é `"10.50"`). Um valor que o provedor não mandou não pode virar dinheiro de alguém. A saída usa `toFixed(2)`, nunca
    `toString()`, que pode devolver notação científica.
 3. **Um Decimal só nosso.** `Decimal.clone({ precision: 40 })` isola a configuração: não
    mexemos no `Decimal` global e não dependemos da precisão padrão (20 dígitos).
+
+**O saldo observado é sempre o da wallet, na moeda da wallet.** `balance_after`, em toda
+transação e em todo replay, é o saldo da WALLET quando a transação foi decidida, e o `Money`
+correspondente está na moeda da wallet. Não existe caso especial: na imensa maioria dos casos a
+moeda da wallet e a da transação coincidem; elas diferem só quando o provedor manda outra moeda
+e a transação é rejeitada com `CURRENCY_MISMATCH`. A transação continua gravada como o provedor
+mandou (`amount` e `currency` em USD, por exemplo), e `balance_after` guarda o saldo da wallet
+(BRL). A coluna é `NUMERIC` sem moeda própria, então a moeda vem da wallet (imutável) na
+leitura. O domínio não confere a moeda do saldo observado, porque a transação não conhece a da
+wallet: o único limite é não ser negativo.
 
 O que os testes provaram, além do esperado:
 

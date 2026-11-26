@@ -95,8 +95,9 @@ export function transactionFromRow(row: TransactionRow): WagerTransaction {
       failureCode: row.failureCode as FailureCode,
     }),
     ...(row.processedAt != null && { processedAt: row.processedAt }),
+    // O saldo observado está na moeda da WALLET, que pode ser diferente da da transação.
     ...(row.balanceAfter != null && {
-      balanceAfter: money(row.balanceAfter, row.currency),
+      balanceAfter: money(row.balanceAfter, row.walletCurrency),
     }),
     attempts: row.attempts,
     ...(row.nextAttemptAt != null && { nextAttemptAt: row.nextAttemptAt }),
