@@ -22,4 +22,14 @@ process.env.AWS_REGION ??= 'us-east-1';
 // um .env de desenvolvimento não pode ligá-lo e fazer a suíte competir pela fila de verdade.
 process.env.SQS_CONSUMER_ENABLED = 'false';
 
+// Os nomes das filas dos apps de teste (inclusive os processos filhos) apontam para filas SÓ DE
+// TESTE, nunca para as reais. Assim a suíte passa com a stack inteira no ar (docker compose up -d,
+// com o consumidor do app de verdade ligado na wager-transactions.fifo): ninguém disputa a fila.
+// Também fixos de propósito. Só o teste que confere os nomes e o redrive das filas reais as
+// toca, e só para LER os atributos (nunca envia mensagem).
+const TEST_QUEUE_NAME = 'test-app-wager-transactions.fifo';
+const TEST_DLQ_NAME = 'test-app-wager-transactions-dlq.fifo';
+process.env.SQS_QUEUE_NAME = TEST_QUEUE_NAME;
+process.env.SQS_DLQ_NAME = TEST_DLQ_NAME;
+
 // O schema do banco de testes é recriado sob demanda, por test/support/database.ts.

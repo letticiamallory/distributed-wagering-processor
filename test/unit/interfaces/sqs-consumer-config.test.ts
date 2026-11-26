@@ -69,6 +69,14 @@ describe('loadSqsConsumerConfig', () => {
     );
   });
 
+  test('the TEST ENVIRONMENT points at test-only queues, never at the real ones (the suite must pass with the whole stack up)', () => {
+    const config = loadSqsConsumerConfig(process.env);
+    expect(config.queueName).toStartWith('test-');
+    expect(config.dlqName).toStartWith('test-');
+    expect(config.queueName).not.toBe('wager-transactions.fifo');
+    expect(config.dlqName).not.toBe('wager-transactions-dlq.fifo');
+  });
+
   test('the TEST ENVIRONMENT is born with the consumer OFF (test/support/setup.ts)', () => {
     expect(loadSqsConsumerConfig(process.env).enabled).toBe(false);
   });
