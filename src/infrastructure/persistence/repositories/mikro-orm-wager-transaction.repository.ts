@@ -43,15 +43,17 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
     return count > 0;
   }
 
-  // WIN PROCESSED que aponta para a BET e que ninguém reverteu com sucesso. Um WIN
-  // REJECTED não pagou nada, e um WIN revertido devolveu o prêmio: nos dois casos a BET
-  // pode ser revertida. LOSS nunca entra (ADR-0005).
+  // WIN PROCESSED que aponta para a BET, que PAGOU alguma coisa (valor > 0) e que ninguém
+  // reverteu com sucesso. "Liquidada" quer dizer que o jogador recebeu dinheiro: um WIN
+  // REJECTED não pagou nada, um WIN revertido devolveu o prêmio, e um WIN de 0.00 (como a
+  // LOSS) nunca pagou; nesses casos a BET pode ser revertida (ADR-0005).
   async hasSettledWin(betTransactionId: string): Promise<boolean> {
     const rows = (await this.em.getConnection().execute(
       `SELECT EXISTS (
            SELECT 1 FROM wager_transactions win
            WHERE win.reference_transaction_id = ?
              AND win.kind = 'WIN' AND win.status = 'PROCESSED'
+             AND win.amount > 0
              AND NOT EXISTS (
                SELECT 1 FROM wager_transactions reversal
                WHERE reversal.reference_transaction_id = win.id

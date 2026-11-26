@@ -374,13 +374,16 @@ describe('WagerTransactionRepository: hasProcessedReversal', () => {
 });
 
 describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', () => {
-  async function betWithWin(winStatus: 'processed' | 'rejected' = 'processed') {
+  async function betWithWin(
+    winStatus: 'processed' | 'rejected' = 'processed',
+    winAmount = '80.00',
+  ) {
     const wallet = await walletInDb();
     const bet = processed(newTransaction(wallet));
     await insert(bet);
     const win = newTransaction(wallet, {
       kind: K.Win,
-      money: brl('80.00'),
+      money: brl(winAmount),
       referenceExternalTransactionId: bet.externalTransactionId,
     });
     if (winStatus === 'processed') {
@@ -436,6 +439,28 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
     });
     rejected.reject(FailureCode.ReversalInsufficientFunds, brl('0.00'));
     await insert(rejected);
+    expect(await settled(bet.id)).toBe(true);
+  });
+
+  test('a WIN of 0.00 pays nothing, so it does not settle the BET (settled = the player got money)', async () => {
+    const { bet } = await betWithWin('processed', '0.00');
+    expect(await settled(bet.id)).toBe(false);
+  });
+
+  test('a WIN of 0.01 already settles the BET', async () => {
+    const { bet } = await betWithWin('processed', '0.01');
+    expect(await settled(bet.id)).toBe(true);
+  });
+
+  test('a BET with a WIN of 0.00 AND a WIN of 10.00 is settled (the paying one counts)', async () => {
+    const { wallet, bet } = await betWithWin('processed', '0.00');
+    const paying = newTransaction(wallet, {
+      kind: K.Win,
+      money: brl('10.00'),
+      referenceExternalTransactionId: bet.externalTransactionId,
+    });
+    processed(paying, bet.id);
+    await insert(paying);
     expect(await settled(bet.id)).toBe(true);
   });
 

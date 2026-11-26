@@ -48,8 +48,8 @@ export interface ProcessWagerResult {
   idempotentReplay: boolean;
 }
 
-// Pedaços que ainda não existem: falham alto e explícito, em vez de fingir (ou de aplicar uma
-// regra pela metade). Saem nos commits 5 (REFUND/ROLLBACK) e 6 (PENDING_REFERENCE).
+// Pedaço que ainda não existe: falha alto e explícito, em vez de fingir (ou de aplicar uma
+// regra pela metade). Sai no commit 6 (PENDING_REFERENCE).
 export class NotSupportedYetError extends ApplicationError {
   readonly code = ApiOnlyErrorCode.InternalError;
   constructor(readonly feature: string) {
@@ -93,12 +93,6 @@ export class ProcessWagerTransactionUseCase {
       input,
       context.idempotencyKey,
     );
-    if (
-      command.kind === WagerTransactionKind.Refund ||
-      command.kind === WagerTransactionKind.Rollback
-    ) {
-      throw new NotSupportedYetError(`${command.kind} (commit 5)`);
-    }
 
     // 2. Hash dos campos de negócio (ADR-0008).
     const payloadHash = computePayloadHash({
@@ -177,16 +171,24 @@ export class ProcessWagerTransactionUseCase {
             command.providerId,
             command.referenceExternalTransactionId,
           );
+    // Os dois são calculados AQUI, sob o lock desta wallet: ninguém mexe nas transações dela
+    // entre a leitura e a gravação (ADR-0007), então a foto vale até o commit.
     const alreadyReversed = reference
       ? await repositories.transactions.hasProcessedReversal(reference.id)
       : false;
+    // Só interessa para REFUND/ROLLBACK de uma BET: um prêmio pago impede devolver a aposta.
+    const hasSettledWin =
+      transaction.requiresReference() &&
+      reference?.kind === WagerTransactionKind.Bet
+        ? await repositories.transactions.hasSettledWin(reference.id)
+        : false;
 
     const decision = WagerPolicy.decide({
       wallet,
       transaction,
       reference,
       alreadyReversed,
-      hasSettledWin: false, // só vale para REFUND/ROLLBACK (commit 5)
+      hasSettledWin,
       attemptsExhausted: false,
     });
     if (decision.type === 'waitForReference') {

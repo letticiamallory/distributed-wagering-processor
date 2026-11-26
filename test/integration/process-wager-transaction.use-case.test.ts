@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  DuplicateKeyError,
   ExternalIdConflictError,
   IdempotencyKeyReusedError,
   InvalidCommandError,
@@ -17,6 +18,7 @@ import { CreateWalletUseCase } from '../../src/application/use-cases/create-wall
 import {
   ProcessWagerTransactionUseCase,
   type ProcessWagerContext,
+  type ProcessWagerResult,
 } from '../../src/application/use-cases/process-wager-transaction.use-case.js';
 import { FailureCode } from '../../src/domain/errors/failure-code.js';
 import { computePayloadHash } from '../../src/domain/wager/wager-payload-hash.js';
@@ -25,6 +27,12 @@ import { WagerTransactionStatus } from '../../src/domain/wager/wager-transaction
 import { WagerTransaction } from '../../src/domain/wager/wager-transaction.js';
 import { UuidV7Generator } from '../../src/infrastructure/system/uuid-v7-generator.js';
 import { rejectionOf } from '../support/assertions.js';
+import {
+  holding,
+  inTheWindow,
+  simultaneously,
+  valueOf,
+} from '../support/concurrency.js';
 import { assertInvariants } from '../support/invariants.js';
 import { brl, usePersistence, uuid } from '../support/persistence.js';
 
@@ -219,28 +227,6 @@ class CountingIds extends IdGenerator {
   }
 }
 
-// Para na porta da transação, para o teste fazer outra requisição passar no meio (a janela
-// entre a checagem rápida e o lock).
-class GatedUnitOfWork extends UnitOfWork {
-  readonly reached: Promise<void>;
-  private markReached!: () => void;
-  private open!: () => void;
-  private readonly gate: Promise<void>;
-  constructor(private readonly inner: UnitOfWork) {
-    super();
-    this.reached = new Promise((resolve) => (this.markReached = resolve));
-    this.gate = new Promise((resolve) => (this.open = resolve));
-  }
-  release(): void {
-    this.open();
-  }
-  async run<T>(work: (repositories: Repositories) => Promise<T>): Promise<T> {
-    this.markReached();
-    await this.gate;
-    return this.inner.run(work);
-  }
-}
-
 class UnitOfWorkWith extends UnitOfWork {
   constructor(
     private readonly inner: UnitOfWork,
@@ -403,6 +389,24 @@ describe('ProcessWagerTransaction: BET', () => {
     });
     expect(await movements(wallet.id)).toHaveLength(0);
     expect(await eventTypes(wallet.id)).toEqual(['WagerTransactionRejected']);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('a BET that carries a reference field ignores it: the policy never validated it, so it is NOT linked', async () => {
+    const wallet = await walletWith('100.00');
+    const other = await submit(body(wallet)); // uma transação qualquer, já PROCESSED
+    const otherExternal = String(
+      (await txRow(other.transactionId)).external_transaction_id,
+    );
+
+    const bet = await submit(
+      body(wallet, { referenceExternalTransactionId: otherExternal }),
+    );
+
+    expect(bet.status).toBe(WagerTransactionStatus.Processed);
+    const row = await txRow(bet.transactionId);
+    expect(row.reference_transaction_id).toBeNull(); // não virou vínculo
+    expect(row.reference_external_transaction_id).toBe(otherExternal); // o que o provedor mandou fica como veio
     await assertInvariants(sql, wallet.id);
   });
 
@@ -588,10 +592,13 @@ describe('ProcessWagerTransaction: WIN', () => {
   });
 });
 
-describe("ProcessWagerTransaction: several WINs for the same BET (documents today's behavior)", () => {
-  // Nenhuma regra da política nem do schema limita quantos WINs apontam para a mesma BET (o
-  // índice único de referência só cobre REFUND e ROLLBACK). Este teste NÃO decide que deve ser
-  // assim: registra o que acontece hoje, para uma mudança futura ser consciente.
+describe('ProcessWagerTransaction: several WINs for the same BET are allowed (ADR-0005)', () => {
+  // É A REGRA, não um acaso: há jogos que pagam em partes e rodadas bônus que premiam a mesma
+  // aposta mais de uma vez. Não existe limite de WINs por BET (o índice único de referência só
+  // cobre REFUND e ROLLBACK). A segurança vem da idempotência por id externo (o mesmo WIN
+  // reenviado não paga de novo) e do REFERENCE_SETTLED (a BET não pode ser revertida enquanto
+  // houver um WIN PROCESSED não revertido).
+  // A regra: dois WINs com ids externos diferentes são dois prêmios, e cada um paga uma vez.
   test('two WINs with different external ids for the same BET are both PROCESSED and both pay', async () => {
     const wallet = await walletWith('100.00');
     const bet = await submit(body(wallet));
@@ -631,6 +638,7 @@ describe("ProcessWagerTransaction: several WINs for the same BET (documents toda
     await assertInvariants(sql, wallet.id);
   });
 
+  // A regra: o limite de pagamento é a idempotência. O MESMO WIN (mesmo id externo) paga uma vez.
   test('the SAME WIN sent twice (same external id) pays once: the second is a replay', async () => {
     const wallet = await walletWith('100.00');
     const bet = await submit(body(wallet));
@@ -924,24 +932,23 @@ describe('ProcessWagerTransaction: steps 1-3 happen before any lock or transacti
     const input = body(wallet);
     await submit(input);
 
-    let release!: () => void;
-    const hold = new Promise<void>((resolve) => (release = resolve));
-    let locked!: () => void;
-    const hasLock = new Promise<void>((resolve) => (locked = resolve));
-    const holder = db().uow.run(async (r) => {
-      await r.wallets.lockById(wallet.id);
-      locked();
-      await hold;
-    });
-    await hasLock;
+    const replay = await holding(
+      async ({ locked, until }) => {
+        await db().uow.run(async (r) => {
+          await r.wallets.lockById(wallet.id);
+          locked();
+          await until;
+        });
+      },
+      async () => {
+        const started = performance.now();
+        const answer = await submit(input);
+        expect(performance.now() - started).toBeLessThan(1000);
+        return answer;
+      },
+    );
 
-    const started = performance.now();
-    const replay = await submit(input);
     expect(replay.idempotentReplay).toBe(true);
-    expect(performance.now() - started).toBeLessThan(1000);
-
-    release();
-    await holder;
   });
 });
 
@@ -1070,14 +1077,16 @@ describe('ProcessWagerTransaction: idempotency', () => {
   test('step 5: a twin that commits between the fast check and the lock makes this one a replay (one debit only)', async () => {
     const wallet = await walletWith('100.00');
     const input = body(wallet);
-    const gated = new GatedUnitOfWork(db().uow);
+    let twin!: ProcessWagerResult;
 
-    const slow = submit(input, {}, build({ uow: gated })); // passa pela checagem rápida e para na porta
-    await gated.reached;
-    const twin = await submit(input); // o gêmeo termina antes: commitou o débito
-    expect(twin.idempotentReplay).toBe(false);
-    gated.release();
-    const result = await slow;
+    const result = await inTheWindow(
+      db().uow,
+      (gated) => submit(input, {}, build({ uow: gated })), // passa pela checagem rápida e para na porta
+      async () => {
+        twin = await submit(input); // o gêmeo termina antes: commitou o débito
+        expect(twin.idempotentReplay).toBe(false);
+      },
+    );
 
     expect(result).toEqual({ ...twin, idempotentReplay: true });
     expect(await walletRow(wallet.id)).toMatchObject({
@@ -1091,18 +1100,23 @@ describe('ProcessWagerTransaction: idempotency', () => {
   test('step 5: the same key with another payload committed in the window is IDEMPOTENCY_KEY_REUSED', async () => {
     const wallet = await walletWith('100.00');
     const input = body(wallet);
-    const gated = new GatedUnitOfWork(db().uow);
 
-    const slow = submit(
-      { ...input, money: { amount: '26.00', currency: 'BRL' } },
-      { idempotencyKey: keyOf(input) },
-      build({ uow: gated }),
+    const error = await rejectionOf(
+      inTheWindow(
+        db().uow,
+        (gated) =>
+          submit(
+            { ...input, money: { amount: '26.00', currency: 'BRL' } },
+            { idempotencyKey: keyOf(input) },
+            build({ uow: gated }),
+          ),
+        async () => {
+          await submit(input);
+        },
+      ),
     );
-    await gated.reached;
-    await submit(input);
-    gated.release();
 
-    expect(await rejectionOf(slow)).toBeInstanceOf(IdempotencyKeyReusedError);
+    expect(error).toBeInstanceOf(IdempotencyKeyReusedError);
     expect(await walletRow(wallet.id)).toMatchObject({
       balance: '75.00',
       version: 2,
@@ -1112,18 +1126,19 @@ describe('ProcessWagerTransaction: idempotency', () => {
   test('step 5: another key with the same external id committed in the window is EXTERNAL_ID_CONFLICT', async () => {
     const wallet = await walletWith('100.00');
     const input = body(wallet);
-    const gated = new GatedUnitOfWork(db().uow);
 
-    const slow = submit(
-      input,
-      { idempotencyKey: 'slow-key' },
-      build({ uow: gated }),
+    const error = await rejectionOf(
+      inTheWindow(
+        db().uow,
+        (gated) =>
+          submit(input, { idempotencyKey: 'slow-key' }, build({ uow: gated })),
+        async () => {
+          await submit(input);
+        },
+      ),
     );
-    await gated.reached;
-    await submit(input);
-    gated.release();
 
-    expect(await rejectionOf(slow)).toBeInstanceOf(ExternalIdConflictError);
+    expect(error).toBeInstanceOf(ExternalIdConflictError);
     expect(await movements(wallet.id)).toHaveLength(1);
   });
 });
@@ -1388,14 +1403,14 @@ describe('ProcessWagerTransaction: the inbox is checked twice, like the idempote
     const input = body(wallet);
     const messageId = `msg-${uuid()}`;
     // As duas passam juntas pelo passo 3 (nenhuma commitou ainda) e só depois disputam o lock.
-    const gateA = new GatedUnitOfWork(db().uow);
-    const gateB = new GatedUnitOfWork(db().uow);
-    const a = submit(input, { inbox: inbox(messageId) }, build({ uow: gateA }));
-    const b = submit(input, { inbox: inbox(messageId) }, build({ uow: gateB }));
-    await Promise.all([gateA.reached, gateB.reached]);
-    gateA.release();
-    gateB.release();
-    const results = await Promise.all([a, b]);
+    const [a, b] = await simultaneously(
+      db().uow,
+      (gate) =>
+        submit(input, { inbox: inbox(messageId) }, build({ uow: gate })),
+      (gate) =>
+        submit(input, { inbox: inbox(messageId) }, build({ uow: gate })),
+    );
+    const results = [valueOf(a), valueOf(b)];
 
     expect(results.filter((r) => !r.idempotentReplay)).toHaveLength(1);
     expect(results.filter((r) => r.idempotentReplay)).toHaveLength(1);
@@ -1412,29 +1427,28 @@ describe('ProcessWagerTransaction: the inbox is checked twice, like the idempote
   test('step 5: two deliveries of the same message with DIFFERENT payloads: one processes, the other is a producer bug', async () => {
     const wallet = await walletWith('100.00');
     const messageId = `msg-${uuid()}`;
-    const gateA = new GatedUnitOfWork(db().uow);
-    const gateB = new GatedUnitOfWork(db().uow);
     const idsA = new CountingIds();
     const idsB = new CountingIds();
-    const a = submit(
-      body(wallet),
-      { inbox: inbox(messageId) },
-      build({ uow: gateA, ids: idsA }),
+    const outcomes = await simultaneously(
+      db().uow,
+      (gate) =>
+        submit(
+          body(wallet),
+          { inbox: inbox(messageId) },
+          build({ uow: gate, ids: idsA }),
+        ),
+      (gate) =>
+        submit(
+          body(wallet, { money: { amount: '40.00', currency: 'BRL' } }),
+          { inbox: inbox(messageId) },
+          build({ uow: gate, ids: idsB }),
+        ),
     );
-    const b = submit(
-      body(wallet, { money: { amount: '40.00', currency: 'BRL' } }),
-      { inbox: inbox(messageId) },
-      build({ uow: gateB, ids: idsB }),
-    );
-    await Promise.all([gateA.reached, gateB.reached]);
-    gateA.release();
-    gateB.release();
-    const outcomes = await Promise.allSettled([a, b]);
 
-    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
-    const refused = outcomes.find((o) => o.status === 'rejected');
-    expect(refused).toBeDefined();
-    expect((refused as PromiseRejectedResult).reason).toMatchObject({
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    const refusedIndex = outcomes.findIndex((o) => !o.ok);
+    const refused = outcomes[refusedIndex];
+    expect(refused && !refused.ok && refused.error).toMatchObject({
       name: 'InboxMessageReusedError',
     });
     expect(await inboxRows(messageId)).toBe(1);
@@ -1444,7 +1458,6 @@ describe('ProcessWagerTransaction: the inbox is checked twice, like the idempote
     // A recusa vem da checagem sob o lock, ANTES de qualquer trabalho: quem foi recusado nem
     // chegou a pedir um id (não construiu a transação). Sem essa checagem o erro só viria no
     // fim, do INSERT da inbox, depois de decidir a política e gravar tudo (e desfazer).
-    const refusedIndex = outcomes.findIndex((o) => o.status === 'rejected');
     const refusedIds = refusedIndex === 0 ? idsA : idsB;
     expect(refusedIds.given).toHaveLength(0);
   });
@@ -1491,29 +1504,1041 @@ describe('ProcessWagerTransaction: clock and ids', () => {
 
 // ---------------------------------------------------------------- fora deste commit
 
-describe('ProcessWagerTransaction: not supported yet (explicit errors, removed in commits 5 and 6)', () => {
-  test.each(['REFUND', 'ROLLBACK'])(
-    '%s fails loudly instead of being applied without its rules, and writes nothing',
+// ---------------------------------------------------------------- commit 5: REFUND e ROLLBACK
+
+// Apoio: aposta, prêmio e reversão com os valores mais comuns (wallet de 100.00).
+const externalOf = async (transactionId: string) =>
+  String((await txRow(transactionId)).external_transaction_id);
+
+async function placeBet(wallet: Wallet, amount = '25.00') {
+  const result = await submit(
+    body(wallet, { money: { amount, currency: 'BRL' } }),
+  );
+  expect(result.status).toBe(WagerTransactionStatus.Processed);
+  return { ...result, external: await externalOf(result.transactionId) };
+}
+
+const winBody = (wallet: Wallet, betExternal: string, amount = '80.00') =>
+  body(wallet, {
+    kind: 'WIN',
+    money: { amount, currency: 'BRL' },
+    referenceExternalTransactionId: betExternal,
+  });
+
+async function pay(wallet: Wallet, betExternal: string, amount = '80.00') {
+  const result = await submit(winBody(wallet, betExternal, amount));
+  expect(result.status).toBe(WagerTransactionStatus.Processed);
+  return { ...result, external: await externalOf(result.transactionId) };
+}
+
+const reversalBody = (
+  wallet: Wallet,
+  kind: 'REFUND' | 'ROLLBACK',
+  referenceExternal: string,
+  amount = '25.00',
+  overrides: Record<string, unknown> = {},
+) =>
+  body(wallet, {
+    kind,
+    money: { amount, currency: 'BRL' },
+    referenceExternalTransactionId: referenceExternal,
+    ...overrides,
+  });
+
+async function reverse(
+  wallet: Wallet,
+  kind: 'REFUND' | 'ROLLBACK',
+  referenceExternal: string,
+  amount = '25.00',
+) {
+  const result = await submit(
+    reversalBody(wallet, kind, referenceExternal, amount),
+  );
+  return { ...result, external: await externalOf(result.transactionId) };
+}
+
+const directions = async (walletId: string) =>
+  (await movements(walletId)).map((e) => String(e.direction));
+const balanceOf = async (wallet: Wallet) =>
+  String((await walletRow(wallet.id)).balance);
+const eventsOf = async (walletId: string, transactionId: string) =>
+  sql(
+    `SELECT event_type, payload FROM outbox_messages
+      WHERE aggregate_id = ? AND payload->'data'->>'transactionId' = ?
+      ORDER BY event_type`,
+    [walletId, transactionId],
+  );
+
+describe('ProcessWagerTransaction: REFUND', () => {
+  test('of a PROCESSED BET credits the whole amount back and stores the resolved reference', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund).toMatchObject({
+      status: WagerTransactionStatus.Processed,
+      idempotentReplay: false,
+      balance: { amount: '100.00', currency: 'BRL' },
+    });
+    expect(await txRow(refund.transactionId)).toMatchObject({
+      kind: 'REFUND',
+      status: 'PROCESSED',
+      reference_transaction_id: bet.transactionId,
+      reference_external_transaction_id: bet.external,
+      balance_after: '100.00',
+    });
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    expect(await walletRow(wallet.id)).toMatchObject({
+      balance: '100.00',
+      version: 3,
+    });
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('writes WagerTransactionProcessed and WalletBalanceChanged (CREDIT)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    const events = await eventsOf(wallet.id, refund.transactionId);
+
+    expect(events.map((e) => e.event_type)).toEqual([
+      'WagerTransactionProcessed',
+      'WalletBalanceChanged',
+    ]);
+    const changed = (events[1] as Row).payload as { data: unknown };
+    expect(changed.data).toMatchObject({
+      direction: 'CREDIT',
+      money: { amount: '25.00', currency: 'BRL' },
+      balanceBefore: { amount: '75.00', currency: 'BRL' },
+      balanceAfter: { amount: '100.00', currency: 'BRL' },
+      walletVersion: 3,
+    });
+  });
+
+  test('the replay answers with the balance of THAT day', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const input = reversalBody(wallet, 'REFUND', bet.external);
+    const first = await submit(input);
+    await placeBet(wallet, '30.00'); // o saldo de hoje já é 70.00
+
+    const replay = await submit(input);
+
+    expect(replay).toEqual({ ...first, idempotentReplay: true });
+    expect(replay.balance).toEqual({ amount: '100.00', currency: 'BRL' });
+    expect(await balanceOf(wallet)).toBe('70.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT', 'DEBIT']); // um CREDIT só
+  });
+
+  test.each(['20.00', '30.00'])(
+    'for %s instead of the BET amount is REJECTED AMOUNT_MISMATCH, and does not block the right one',
+    async (amount) => {
+      const wallet = await walletWith('100.00');
+      const bet = await placeBet(wallet);
+
+      const wrong = await submit(
+        reversalBody(wallet, 'REFUND', bet.external, amount),
+      );
+      expect(wrong).toMatchObject({
+        status: WagerTransactionStatus.Rejected,
+        failureCode: FailureCode.AmountMismatch,
+        balance: { amount: '75.00', currency: 'BRL' },
+      });
+      expect(await balanceOf(wallet)).toBe('75.00');
+
+      // Só PROCESSED conta como reversão (ADR-0005): a rejeitada não trava a certa.
+      const right = await submit(reversalBody(wallet, 'REFUND', bet.external));
+      expect(right.status).toBe(WagerTransactionStatus.Processed);
+      expect(await balanceOf(wallet)).toBe('100.00');
+      await assertInvariants(sql, wallet.id);
+    },
+  );
+
+  test.each(['WIN', 'LOSS', 'REFUND', 'ROLLBACK'])(
+    'of a %s is REJECTED REFERENCE_KIND_NOT_ALLOWED (a REFUND only reverses a BET)',
     async (kind) => {
       const wallet = await walletWith('100.00');
-      const bet = await submit(body(wallet));
-      const betExternal = String(
-        (await txRow(bet.transactionId)).external_transaction_id,
+      let referenceExternal: string;
+      if (kind === 'WIN') {
+        const bet = await placeBet(wallet);
+        referenceExternal = (await pay(wallet, bet.external, '10.00')).external;
+      } else if (kind === 'LOSS') {
+        const loss = await submit(
+          body(wallet, {
+            kind: 'LOSS',
+            money: { amount: '0.00', currency: 'BRL' },
+          }),
+        );
+        referenceExternal = await externalOf(loss.transactionId);
+      } else {
+        const bet = await placeBet(wallet);
+        referenceExternal = (
+          await reverse(wallet, kind as 'REFUND' | 'ROLLBACK', bet.external)
+        ).external;
+      }
+      const before = await balanceOf(wallet);
+
+      const result = await submit(
+        reversalBody(wallet, 'REFUND', referenceExternal, '5.00'),
       );
-      const before = await walletRow(wallet.id);
+
+      expect(result).toMatchObject({
+        status: WagerTransactionStatus.Rejected,
+        failureCode: FailureCode.ReferenceKindNotAllowed,
+      });
+      expect(await balanceOf(wallet)).toBe(before);
+      await assertInvariants(sql, wallet.id);
+    },
+  );
+
+  test('of a BET that was REJECTED is REJECTED REFERENCE_NOT_PROCESSED', async () => {
+    const wallet = await walletWith('100.00');
+    const rejectedBet = await submit(
+      body(wallet, { money: { amount: '999.00', currency: 'BRL' } }),
+    );
+    expect(rejectedBet.status).toBe(WagerTransactionStatus.Rejected);
+
+    const result = await submit(
+      reversalBody(
+        wallet,
+        'REFUND',
+        await externalOf(rejectedBet.transactionId),
+        '999.00',
+      ),
+    );
+
+    expect(result).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceNotProcessed,
+    });
+    expect(await balanceOf(wallet)).toBe('100.00');
+  });
+
+  test('of a BET of another wallet is REJECTED REFERENCE_MISMATCH', async () => {
+    const mine = await walletWith('100.00');
+    const theirs = await walletWith('100.00');
+    const theirBet = await placeBet(theirs);
+
+    const result = await submit(
+      reversalBody(mine, 'REFUND', theirBet.external),
+    );
+
+    expect(result).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceMismatch,
+    });
+    expect(await balanceOf(mine)).toBe('100.00');
+    expect(await balanceOf(theirs)).toBe('75.00'); // a wallet alheia nem foi tocada
+  });
+
+  test('of a BET of another round is REJECTED REFERENCE_MISMATCH', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await submit(body(wallet, { roundId: 'round-A' }));
+    const result = await submit(
+      reversalBody(
+        wallet,
+        'REFUND',
+        await externalOf(bet.transactionId),
+        '25.00',
+        { roundId: 'round-B' },
+      ),
+    );
+    expect(result).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceMismatch,
+    });
+  });
+
+  test('a second REFUND of the same BET (another external id) is REJECTED REFERENCE_ALREADY_REVERSED: credited once', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    await reverse(wallet, 'REFUND', bet.external);
+
+    const again = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(again).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceAlreadyReversed,
+    });
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('after a ROLLBACK of the same BET is REJECTED REFERENCE_ALREADY_REVERSED (ADR-0005: one reversal, any kind)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    await reverse(wallet, 'ROLLBACK', bet.external);
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceAlreadyReversed,
+    });
+    expect(await balanceOf(wallet)).toBe('100.00');
+  });
+
+  test('needs no balance at all: a credit never fails for lack of funds', async () => {
+    const wallet = await walletWith('25.00');
+    const bet = await placeBet(wallet); // saldo 0.00
+    expect(await balanceOf(wallet)).toBe('0.00');
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+    expect(refund.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('25.00');
+  });
+});
+
+describe('ProcessWagerTransaction: REFERENCE_SETTLED (a settled BET cannot be reversed, ADR-0005 sister rule 2)', () => {
+  test.each(['REFUND', 'ROLLBACK'] as const)(
+    'a %s of a BET that has a PROCESSED WIN is REJECTED REFERENCE_SETTLED and moves nothing',
+    async (kind) => {
+      const wallet = await walletWith('100.00');
+      const bet = await placeBet(wallet);
+      await pay(wallet, bet.external, '80.00'); // saldo 155.00
+
+      const result = await submit(reversalBody(wallet, kind, bet.external));
+
+      expect(result).toMatchObject({
+        status: WagerTransactionStatus.Rejected,
+        failureCode: FailureCode.ReferenceSettled,
+        balance: { amount: '155.00', currency: 'BRL' },
+      });
+      expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+      expect(
+        await eventsOf(wallet.id, result.transactionId).then((e) =>
+          e.map((x) => x.event_type),
+        ),
+      ).toEqual(['WagerTransactionRejected']);
+      await assertInvariants(sql, wallet.id);
+    },
+  );
+
+  test('a WIN that was REJECTED paid nothing, so it does not settle the BET', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const rejectedWin = await submit(
+      body(wallet, {
+        kind: 'WIN',
+        playerId: uuid(), // outro jogador: WALLET_PLAYER_MISMATCH, nada é pago
+        money: { amount: '80.00', currency: 'BRL' },
+        referenceExternalTransactionId: bet.external,
+      }),
+    );
+    expect(rejectedWin.status).toBe(WagerTransactionStatus.Rejected);
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('100.00');
+  });
+
+  test('a WIN of 0.00 pays nothing, so it does not settle the BET (same criterion as a LOSS: settled = the player got money)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet); // 75.00
+    const zero = await submit(winBody(wallet, bet.external, '0.00'));
+    expect(zero).toMatchObject({
+      status: WagerTransactionStatus.Processed,
+      balance: { amount: '75.00', currency: 'BRL' },
+    });
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('100.00');
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('a WIN of 0.01 already settles the BET: any money paid counts', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    await pay(wallet, bet.external, '0.01'); // 75.01
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceSettled,
+    });
+    expect(await balanceOf(wallet)).toBe('75.01');
+  });
+
+  test('a WIN of 0.00 does not keep the BET locked forever, even though it can never be rolled back', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const zero = await pay(wallet, bet.external, '0.00');
+    // Um WIN de 0.00 não tem o que desfazer: o ROLLBACK de valor zero nem é aceito como entrada.
+    const rollbackOfZero = await rejectionOf(
+      submit(reversalBody(wallet, 'ROLLBACK', zero.external, '0.00')),
+    );
+    expect(rollbackOfZero).toMatchObject({ code: FailureCode.InvalidAmount });
+    // E, ainda assim, a BET pode ser devolvida.
+    const rollback = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external),
+    );
+    expect(rollback.status).toBe(WagerTransactionStatus.Processed);
+  });
+
+  test('a LOSS does not settle the BET: BET + LOSS + REFUND is zero', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const loss = await submit(
+      body(wallet, {
+        kind: 'LOSS',
+        money: { amount: '0.00', currency: 'BRL' },
+        referenceExternalTransactionId: bet.external,
+      }),
+    );
+    expect(loss.status).toBe(WagerTransactionStatus.Processed);
+
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('100.00');
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('once the WIN is reversed the BET can be reversed again', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00'); // 155.00
+    const blocked = await submit(reversalBody(wallet, 'REFUND', bet.external));
+    expect(blocked.failureCode).toBe(FailureCode.ReferenceSettled);
+
+    const undo = await reverse(wallet, 'ROLLBACK', win.external, '80.00'); // devolve o prêmio: 75.00
+    expect(undo.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('75.00');
+    const refund = await submit(reversalBody(wallet, 'REFUND', bet.external));
+
+    expect(refund.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual([
+      'DEBIT',
+      'CREDIT',
+      'DEBIT',
+      'CREDIT',
+    ]);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('with SEVERAL WINs the BET stays settled until ALL of them are reversed', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet); // 75
+    const first = await pay(wallet, bet.external, '40.00'); // 115
+    const second = await pay(wallet, bet.external, '10.00'); // 125
+
+    await reverse(wallet, 'ROLLBACK', first.external, '40.00'); // 85
+    const stillBlocked = await submit(
+      reversalBody(wallet, 'REFUND', bet.external),
+    );
+    expect(stillBlocked).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceSettled,
+    });
+
+    await reverse(wallet, 'ROLLBACK', second.external, '10.00'); // 75
+    const allowed = await submit(reversalBody(wallet, 'REFUND', bet.external));
+    expect(allowed.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('100.00');
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('the replay of a REFERENCE_SETTLED rejection stays the same even after the WIN was reversed', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00');
+    const input = reversalBody(wallet, 'REFUND', bet.external);
+    const rejected = await submit(input);
+    await reverse(wallet, 'ROLLBACK', win.external, '80.00'); // agora a BET poderia ser devolvida
+
+    const replay = await submit(input);
+
+    expect(replay).toEqual({ ...rejected, idempotentReplay: true });
+    expect(replay.failureCode).toBe(FailureCode.ReferenceSettled);
+    expect(replay.balance).toEqual({ amount: '155.00', currency: 'BRL' }); // o saldo da época
+    // A rejeição é história; uma NOVA tentativa (outro id externo) agora passa.
+    const fresh = await submit(reversalBody(wallet, 'REFUND', bet.external));
+    expect(fresh.status).toBe(WagerTransactionStatus.Processed);
+  });
+});
+
+describe('ProcessWagerTransaction: ROLLBACK (the inverse of the reference)', () => {
+  test('of a BET credits it back (the inverse of a DEBIT) and stores the reference', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const rollback = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external),
+    );
+
+    expect(rollback).toMatchObject({
+      status: WagerTransactionStatus.Processed,
+      balance: { amount: '100.00', currency: 'BRL' },
+    });
+    expect(await txRow(rollback.transactionId)).toMatchObject({
+      kind: 'ROLLBACK',
+      reference_transaction_id: bet.transactionId,
+    });
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('of a WIN debits the prize back (the inverse of a CREDIT)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00'); // 155.00
+
+    const rollback = await submit(
+      reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+    );
+
+    expect(rollback).toMatchObject({
+      status: WagerTransactionStatus.Processed,
+      balance: { amount: '75.00', currency: 'BRL' },
+    });
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT', 'DEBIT']);
+    const changed = (await eventsOf(wallet.id, rollback.transactionId)).find(
+      (e) => e.event_type === 'WalletBalanceChanged',
+    );
+    expect(changed).toBeDefined();
+    expect(((changed as Row).payload as { data: unknown }).data).toMatchObject({
+      direction: 'DEBIT',
+      walletVersion: 4,
+    });
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('of a REFUND debits it back; the BET still cannot be refunded or rolled back again (ADR-0005)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const refund = await reverse(wallet, 'REFUND', bet.external); // 100.00
+
+    const rollback = await submit(
+      reversalBody(wallet, 'ROLLBACK', refund.external),
+    );
+
+    expect(rollback).toMatchObject({
+      status: WagerTransactionStatus.Processed,
+      balance: { amount: '75.00', currency: 'BRL' },
+    });
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT', 'DEBIT']);
+
+    for (const kind of ['REFUND', 'ROLLBACK'] as const) {
+      const again = await submit(reversalBody(wallet, kind, bet.external));
+      expect(again).toMatchObject({
+        status: WagerTransactionStatus.Rejected,
+        failureCode: FailureCode.ReferenceAlreadyReversed,
+      });
+    }
+    expect(await balanceOf(wallet)).toBe('75.00');
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('of a WIN the wallet can no longer cover is REJECTED REVERSAL_INSUFFICIENT_FUNDS (not INSUFFICIENT_FUNDS)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00'); // 155.00
+    await placeBet(wallet, '140.00'); // gasta: sobram 15.00
+    const input = reversalBody(wallet, 'ROLLBACK', win.external, '80.00');
+
+    const result = await submit(input);
+
+    expect(result).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReversalInsufficientFunds,
+      balance: { amount: '15.00', currency: 'BRL' },
+    });
+    expect(await balanceOf(wallet)).toBe('15.00');
+    const replay = await submit(input);
+    expect(replay).toEqual({ ...result, idempotentReplay: true });
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('of a BET needs no balance: the wallet at 0.00 gets the money back', async () => {
+    const wallet = await walletWith('25.00');
+    const bet = await placeBet(wallet);
+    expect(await balanceOf(wallet)).toBe('0.00');
+    const rollback = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external),
+    );
+    expect(rollback.status).toBe(WagerTransactionStatus.Processed);
+    expect(await balanceOf(wallet)).toBe('25.00');
+  });
+
+  test.each(['LOSS', 'ROLLBACK'])(
+    'of a %s is REJECTED REFERENCE_KIND_NOT_ALLOWED',
+    async (kind) => {
+      const wallet = await walletWith('100.00');
+      let referenceExternal: string;
+      if (kind === 'LOSS') {
+        const loss = await submit(
+          body(wallet, {
+            kind: 'LOSS',
+            money: { amount: '0.00', currency: 'BRL' },
+          }),
+        );
+        referenceExternal = await externalOf(loss.transactionId);
+      } else {
+        const bet = await placeBet(wallet);
+        referenceExternal = (await reverse(wallet, 'ROLLBACK', bet.external))
+          .external;
+      }
+      const result = await submit(
+        reversalBody(wallet, 'ROLLBACK', referenceExternal, '5.00'),
+      );
+      expect(result).toMatchObject({
+        status: WagerTransactionStatus.Rejected,
+        failureCode: FailureCode.ReferenceKindNotAllowed,
+      });
+    },
+  );
+
+  test('a second ROLLBACK of the same transaction is REJECTED REFERENCE_ALREADY_REVERSED: debited once', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00');
+    await reverse(wallet, 'ROLLBACK', win.external, '80.00'); // 75.00
+
+    const again = await submit(
+      reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+    );
+
+    expect(again).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceAlreadyReversed,
+    });
+    expect(await balanceOf(wallet)).toBe('75.00');
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('for another amount is REJECTED AMOUNT_MISMATCH', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const result = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external, '24.99'),
+    );
+    expect(result).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.AmountMismatch,
+    });
+    expect(await balanceOf(wallet)).toBe('75.00');
+  });
+
+  test('the full chain: a settled BET is only reversible after its WIN, in order', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet); // 75
+    const win = await pay(wallet, bet.external, '80.00'); // 155
+
+    const tooEarly = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external),
+    );
+    expect(tooEarly.failureCode).toBe(FailureCode.ReferenceSettled);
+    expect(await balanceOf(wallet)).toBe('155.00');
+
+    const undoWin = await submit(
+      reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+    );
+    expect(undoWin.balance?.amount).toBe('75.00');
+    const undoBet = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external),
+    );
+    expect(undoBet.balance?.amount).toBe('100.00');
+
+    expect(await directions(wallet.id)).toEqual([
+      'DEBIT',
+      'CREDIT',
+      'DEBIT',
+      'CREDIT',
+    ]);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('a rejected reversal writes only the Rejected event', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    const result = await submit(
+      reversalBody(wallet, 'ROLLBACK', bet.external, '1.00'),
+    );
+    expect(
+      (await eventsOf(wallet.id, result.transactionId)).map(
+        (e) => e.event_type,
+      ),
+    ).toEqual(['WagerTransactionRejected']);
+  });
+});
+
+// Quantas reversões (REFUND/ROLLBACK) PROCESSED apontam para esta transação.
+const processedReversalsOf = (transactionId: string) =>
+  count(
+    'wager_transactions',
+    `reference_transaction_id = ? AND status = 'PROCESSED' AND kind IN ('REFUND', 'ROLLBACK')`,
+    [transactionId],
+  );
+
+// Das duas requisições que disputaram: exatamente uma aplicada (PROCESSED) e a outra recusada
+// como RESULTADO de negócio (REJECTED com o código esperado), não como erro.
+function expectOneAppliedAndOneRefused(
+  outcomes: Array<
+    { ok: true; value: ProcessWagerResult } | { ok: false; error: unknown }
+  >,
+  refusalCode: FailureCode,
+) {
+  const results = outcomes.map((o) => valueOf(o));
+  expect(
+    results.filter((r) => r.status === WagerTransactionStatus.Processed),
+  ).toHaveLength(1);
+  const refused = results.filter(
+    (r) => r.status === WagerTransactionStatus.Rejected,
+  );
+  expect(refused).toHaveLength(1);
+  expect(refused[0]?.failureCode).toBe(refusalCode);
+}
+
+describe('ProcessWagerTransaction: reversals are decided UNDER THE LOCK (alreadyReversed and hasSettledWin)', () => {
+  test('a WIN that commits between the fast check and the lock makes the REFUND REFERENCE_SETTLED', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const refund = await inTheWindow(
+      db().uow,
+      (gated) =>
+        submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+          {},
+          build({ uow: gated }),
+        ),
+      async () => {
+        // já passou pelos passos 1-3, ainda não travou: o prêmio commita na janela
+        const win = await submit(winBody(wallet, bet.external));
+        expect(win.status).toBe(WagerTransactionStatus.Processed);
+      },
+    );
+
+    expect(refund).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceSettled,
+    });
+    expect(await balanceOf(wallet)).toBe('155.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('a REFUND that commits between the fast check and the lock makes the WIN REFERENCE_ALREADY_REVERSED', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const win = await inTheWindow(
+      db().uow,
+      (gated) =>
+        submit(winBody(wallet, bet.external), {}, build({ uow: gated })),
+      async () => {
+        const refund = await submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+        );
+        expect(refund.status).toBe(WagerTransactionStatus.Processed);
+      },
+    );
+
+    expect(win).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceAlreadyReversed,
+    });
+    expect(await balanceOf(wallet)).toBe('100.00'); // prêmio de aposta devolvida: não pagou
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('a REFUND that commits in the window makes a second REFUND of the same BET REFERENCE_ALREADY_REVERSED', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const second = await inTheWindow(
+      db().uow,
+      (gated) =>
+        submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+          {},
+          build({ uow: gated }),
+        ),
+      async () => {
+        await submit(reversalBody(wallet, 'REFUND', bet.external)); // outro id externo, commita antes
+      },
+    );
+
+    expect(second).toMatchObject({
+      status: WagerTransactionStatus.Rejected,
+      failureCode: FailureCode.ReferenceAlreadyReversed,
+    });
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+  });
+
+  test('a REFUND and a ROLLBACK of the same BET at the same time: exactly one is applied', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const outcomes = await simultaneously(
+      db().uow,
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+          {},
+          build({ uow: gate }),
+        ),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', bet.external),
+          {},
+          build({ uow: gate }),
+        ),
+    );
+
+    // 1. O DINHEIRO primeiro (nada disto pode falhar, qualquer que seja a forma do perdedor):
+    //    devolvida UMA vez, uma só reversão PROCESSED, e as invariantes de pé.
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    expect(await processedReversalsOf(bet.transactionId)).toBe(1);
+    await assertInvariants(sql, wallet.id);
+    // 2. Depois, a forma: um aplicado, o outro rejeitado pela regra de negócio.
+    expectOneAppliedAndOneRefused(
+      outcomes,
+      FailureCode.ReferenceAlreadyReversed,
+    );
+  });
+
+  test('a REFUND and a WIN of the same BET at the same time: never both (no prize AND money back)', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const outcomes = await simultaneously(
+      db().uow,
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+          {},
+          build({ uow: gate }),
+        ),
+      (gate) => submit(winBody(wallet, bet.external), {}, build({ uow: gate })),
+    );
+
+    // 1. O DINHEIRO primeiro: nunca o REFUND E o prêmio. Uma só das duas PROCESSED.
+    const refundApplied = await count(
+      'wager_transactions',
+      `reference_transaction_id = ? AND kind = 'REFUND' AND status = 'PROCESSED'`,
+      [bet.transactionId],
+    );
+    const winApplied = await count(
+      'wager_transactions',
+      `reference_transaction_id = ? AND kind = 'WIN' AND status = 'PROCESSED'`,
+      [bet.transactionId],
+    );
+    expect(refundApplied + winApplied).toBe(1);
+    expect(await balanceOf(wallet)).toBe(
+      refundApplied === 1 ? '100.00' : '155.00',
+    );
+    await assertInvariants(sql, wallet.id);
+    // 2. Depois, a forma: quem perdeu foi rejeitado pelo motivo certo.
+    const [refundOutcome, winOutcome] = outcomes;
+    if (refundApplied === 1) {
+      expect(valueOf(winOutcome).failureCode).toBe(
+        FailureCode.ReferenceAlreadyReversed,
+      );
+    } else {
+      expect(valueOf(refundOutcome).failureCode).toBe(
+        FailureCode.ReferenceSettled,
+      );
+    }
+  });
+
+  test('two ROLLBACKs of the same WIN at the same time debit it once (the wallet could afford BOTH, so only the rule separates them)', async () => {
+    const wallet = await walletWith('300.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00'); // 355: cabem dois débitos de 80
+
+    const outcomes = await simultaneously(
+      db().uow,
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+          {},
+          build({ uow: gate }),
+        ),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+          {},
+          build({ uow: gate }),
+        ),
+    );
+
+    // 1. O DINHEIRO primeiro: debitado UMA vez, uma só reversão PROCESSED.
+    expect(await balanceOf(wallet)).toBe('275.00');
+    expect(await processedReversalsOf(win.transactionId)).toBe(1);
+    await assertInvariants(sql, wallet.id);
+    // 2. Depois, a forma.
+    expectOneAppliedAndOneRefused(
+      outcomes,
+      FailureCode.ReferenceAlreadyReversed,
+    );
+  });
+});
+
+// Se um dia a checagem de alreadyReversed sumir do código por engano, o ÍNDICE ÚNICO do banco
+// (uq_wtx_reversed_once, ADR-0005) ainda impede o segundo crédito: o perdedor FALHA (23505), não
+// credita. Aqui a checagem é desligada de propósito, só para provar a última linha de defesa.
+describe('ProcessWagerTransaction: the unique index is the LAST line of defense for reversals', () => {
+  // O UnitOfWork de verdade, mas com hasProcessedReversal sempre "não": o bug que o índice cobre.
+  const withoutTheCheck = () =>
+    new UnitOfWorkWith(db().uow, (r) => ({
+      ...r,
+      transactions: Object.assign(
+        Object.create(r.transactions) as typeof r.transactions,
+        {
+          hasProcessedReversal: () => Promise.resolve(false),
+        },
+      ),
+    }));
+
+  test('a REFUND and a ROLLBACK at the same time: the loser FAILS with 23505 and does not credit', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const outcomes = await simultaneously(
+      withoutTheCheck(),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'REFUND', bet.external),
+          {},
+          build({ uow: gate }),
+        ),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', bet.external),
+          {},
+          build({ uow: gate }),
+        ),
+    );
+
+    // O dinheiro: devolvido UMA vez, mesmo sem a checagem.
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    expect(await processedReversalsOf(bet.transactionId)).toBe(1);
+    await assertInvariants(sql, wallet.id);
+    // O perdedor falhou (e o rollback desfez tudo dele), não foi "rejeitado": é o banco falando.
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    const loser = outcomes.find((o) => !o.ok);
+    expect(loser && !loser.ok && loser.error).toBeInstanceOf(DuplicateKeyError);
+    expect(loser && !loser.ok && loser.error).toMatchObject({
+      constraint: 'uq_wtx_reversed_once',
+    });
+    // Nada do perdedor ficou: só a BET e a reversão que venceu apontam para ela.
+    expect(
+      await count('wager_transactions', 'reference_transaction_id = ?', [
+        bet.transactionId,
+      ]),
+    ).toBe(1);
+  });
+
+  test('two ROLLBACKs of the same WIN (balance for both): the loser FAILS with 23505 and does not debit twice', async () => {
+    const wallet = await walletWith('300.00');
+    const bet = await placeBet(wallet);
+    const win = await pay(wallet, bet.external, '80.00'); // 355
+
+    const outcomes = await simultaneously(
+      withoutTheCheck(),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+          {},
+          build({ uow: gate }),
+        ),
+      (gate) =>
+        submit(
+          reversalBody(wallet, 'ROLLBACK', win.external, '80.00'),
+          {},
+          build({ uow: gate }),
+        ),
+    );
+
+    expect(await balanceOf(wallet)).toBe('275.00'); // debitado UMA vez
+    expect(await processedReversalsOf(win.transactionId)).toBe(1);
+    await assertInvariants(sql, wallet.id);
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    const loser = outcomes.find((o) => !o.ok);
+    expect(loser && !loser.ok && loser.error).toBeInstanceOf(DuplicateKeyError);
+    expect(loser && !loser.ok && loser.error).toMatchObject({
+      constraint: 'uq_wtx_reversed_once',
+    });
+  });
+
+  test('a second REFUND that commits in the window: the loser FAILS with 23505 and does not credit', async () => {
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+
+    const error = await rejectionOf(
+      inTheWindow(
+        withoutTheCheck(),
+        (gated) =>
+          submit(
+            reversalBody(wallet, 'REFUND', bet.external),
+            {},
+            build({ uow: gated }),
+          ),
+        async () => {
+          await submit(
+            reversalBody(wallet, 'REFUND', bet.external),
+            {},
+            build({ uow: withoutTheCheck() }),
+          );
+        },
+      ),
+    );
+
+    expect(error).toBeInstanceOf(DuplicateKeyError);
+    expect(error).toMatchObject({ constraint: 'uq_wtx_reversed_once' });
+    expect(await balanceOf(wallet)).toBe('100.00');
+    expect(await directions(wallet.id)).toEqual(['DEBIT', 'CREDIT']);
+    await assertInvariants(sql, wallet.id);
+  });
+
+  test('the limit of the index: it covers a reversal against a reversal, NOT a WIN after a reversal', async () => {
+    // Por isso a checagem existe: o índice só olha REFUND e ROLLBACK. Sem ela, um WIN sobre uma
+    // BET já devolvida passaria (a regra irmã 1 do ADR-0005 é só do código).
+    const wallet = await walletWith('100.00');
+    const bet = await placeBet(wallet);
+    await submit(reversalBody(wallet, 'REFUND', bet.external)); // 100.00
+
+    const win = await submit(
+      winBody(wallet, bet.external),
+      {},
+      build({ uow: withoutTheCheck() }),
+    );
+
+    expect(win.status).toBe(WagerTransactionStatus.Processed); // o que a checagem normalmente impede
+    expect(await balanceOf(wallet)).toBe('180.00');
+  });
+});
+
+describe('ProcessWagerTransaction: not supported yet (explicit errors, removed in commit 6)', () => {
+  test.each(['REFUND', 'ROLLBACK'] as const)(
+    'a %s whose reference does not exist yet fails loudly (PENDING_REFERENCE is commit 6) and writes nothing',
+    async (kind) => {
+      const wallet = await walletWith('100.00');
 
       const error = await rejectionOf(
-        submit(
-          body(wallet, { kind, referenceExternalTransactionId: betExternal }),
-        ),
+        submit(reversalBody(wallet, kind, 'ext-that-never-arrived')),
       );
 
       expect(error).toMatchObject({
         name: 'NotSupportedYetError',
         code: 'INTERNAL_ERROR',
       });
-      expect(await walletRow(wallet.id)).toEqual(before);
-      expect(await wagerRows(wallet.id)).toBe(1); // só a BET
+      expect(await wagerRows(wallet.id)).toBe(0);
+      expect(await walletRow(wallet.id)).toMatchObject({
+        balance: '100.00',
+        version: 1,
+      });
     },
   );
 
@@ -1537,20 +2562,6 @@ describe('ProcessWagerTransaction: not supported yet (explicit errors, removed i
 });
 
 describe('ProcessWagerTransaction: left for the next commits (todo)', () => {
-  // Commit 5
-  test.todo(
-    'REFUND of a BET credits the wallet and stores the resolved reference',
-  );
-  test.todo(
-    'ROLLBACK of a BET, of a WIN and of a REFUND (direction is the inverse of the reference)',
-  );
-  test.todo(
-    'a second reversal of the same transaction is REFERENCE_ALREADY_REVERSED',
-  );
-  test.todo(
-    'REFUND/ROLLBACK of a BET that has a settled WIN is REFERENCE_SETTLED',
-  );
-  test.todo('ROLLBACK of a WIN without balance is REVERSAL_INSUFFICIENT_FUNDS');
   // Commit 6
   test.todo(
     'a reference that does not exist yet is PENDING_REFERENCE (202) and writes the pending event',
