@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { Clock } from '../../../application/ports/clock.js';
 import { IdGenerator } from '../../../application/ports/id-generator.js';
 import { InboxReader } from '../../../application/ports/inbox-repository.js';
+import { MetricsPort } from '../../../application/ports/metrics.port.js';
 import { UnitOfWork } from '../../../application/ports/unit-of-work.js';
 import { WagerTransactionReader } from '../../../application/ports/wager-transaction-repository.js';
 import { ProcessWagerTransactionUseCase } from '../../../application/use-cases/process-wager-transaction.use-case.js';
@@ -20,6 +21,7 @@ import { WagerTransactionsController } from './wager-transactions.controller.js'
         clock: Clock,
         ids: IdGenerator,
         schedule: PendingReferenceSchedule,
+        metrics: MetricsPort,
       ) =>
         new ProcessWagerTransactionUseCase(
           uow,
@@ -28,6 +30,7 @@ import { WagerTransactionsController } from './wager-transactions.controller.js'
           clock,
           ids,
           schedule,
+          metrics,
         ),
       inject: [
         UnitOfWork,
@@ -36,6 +39,7 @@ import { WagerTransactionsController } from './wager-transactions.controller.js'
         Clock,
         IdGenerator,
         PendingReferenceSchedule,
+        MetricsPort,
       ],
     },
   ],

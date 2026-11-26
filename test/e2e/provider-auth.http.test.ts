@@ -3,6 +3,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { ModulesContainer } from '@nestjs/core';
 import { ProviderIdentityPort } from '../../src/application/ports/provider-identity.port.js';
 import { HealthController } from '../../src/interfaces/http/health/health.controller.js';
+import { MetricsController } from '../../src/interfaces/http/metrics/metrics.controller.js';
 import { ProviderAuthGuard } from '../../src/interfaces/http/provider-auth.guard.js';
 import { WagerTransactionsController } from '../../src/interfaces/http/wagering/wager-transactions.controller.js';
 import { WalletsController } from '../../src/interfaces/http/wallets/wallets.controller.js';
@@ -340,9 +341,17 @@ describe('no route can forget the guard', () => {
     expect(guardsOf(HealthController)).toHaveLength(0);
   });
 
-  test('EVERY registered controller has the guard, except health', () => {
+  test('the metrics controller is open too (a scraper has no provider token), and it is the only other one', () => {
+    expect(controllersOf(noop)).toContain(MetricsController);
+    expect(guardsOf(MetricsController)).toHaveLength(0);
+  });
+
+  test('EVERY registered controller has the guard, except the operational ones (health and metrics)', () => {
     const unguarded = controllersOf(noop)
-      .filter((controller) => controller !== HealthController)
+      .filter(
+        (controller) =>
+          controller !== HealthController && controller !== MetricsController,
+      )
       .filter((controller) => !guardsOf(controller).includes(ProviderAuthGuard))
       .map((controller) => controller.name);
     expect(unguarded).toEqual([]);

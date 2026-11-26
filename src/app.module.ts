@@ -4,12 +4,15 @@ import {
   type NestModule,
 } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
+import { MetricsPort } from './application/ports/metrics.port.js';
 import { AuthModule } from './infrastructure/auth/auth.module.js';
 import { PersistenceModule } from './infrastructure/persistence/persistence.module.js';
 import { correlationIdMiddleware } from './interfaces/http/correlation-id.js';
 import { HealthModule } from './interfaces/http/health/health.module.js';
 import { HttpConfig, loadHttpConfig } from './interfaces/http/http-config.js';
 import { HttpExceptionFilter } from './interfaces/http/http-exception.filter.js';
+import { MetricsModule } from './interfaces/http/metrics/metrics.module.js';
+import { requestObservability } from './interfaces/http/request-observability.js';
 import { SqsConsumerModule } from './interfaces/sqs/sqs-consumer.module.js';
 import { OutboxPublisherModule } from './interfaces/workers/outbox-publisher.module.js';
 import { PendingReferenceWorkerModule } from './interfaces/workers/pending-reference-worker.module.js';
@@ -18,6 +21,7 @@ import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
 
 @Module({
   imports: [
+    MetricsModule,
     AuthModule,
     PersistenceModule,
     HealthModule,
@@ -33,8 +37,12 @@ import { WalletsModule } from './interfaces/http/wallets/wallets.module.js';
   ],
 })
 export class AppModule implements NestModule {
+  constructor(private readonly metrics: MetricsPort) {}
+
   // Em TODAS as rotas (inclusive as que não existem): toda resposta leva o correlationId.
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(correlationIdMiddleware).forRoutes('*');
+    consumer
+      .apply(correlationIdMiddleware, requestObservability(this.metrics))
+      .forRoutes('*');
   }
 }
