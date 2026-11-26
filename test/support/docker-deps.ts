@@ -3,15 +3,25 @@
 // uma configurada errado). Não tocam nos serviços do compose nem no banco de teste.
 
 const run = (args: string[]) => {
-  const result = Bun.spawnSync(['docker', ...args], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  return {
-    ok: result.exitCode === 0,
-    out: result.stdout.toString().trim(),
-    err: result.stderr.toString().trim(),
-  };
+  try {
+    const result = Bun.spawnSync(['docker', ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    return {
+      ok: result.exitCode === 0,
+      out: result.stdout.toString().trim(),
+      err: result.stderr.toString().trim(),
+    };
+  } catch (error) {
+    // Sem o binário `docker` (um container de CI, por exemplo) o Bun LANÇA em vez de devolver um
+    // código de saída: para quem pergunta "há Docker?", isso é só "não".
+    return {
+      ok: false,
+      out: '',
+      err: error instanceof Error ? error.message : String(error),
+    };
+  }
 };
 
 export const dockerAvailable = (): boolean =>
