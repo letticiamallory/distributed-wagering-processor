@@ -9,7 +9,10 @@ export class MoneyOverflowError extends DomainError {
 }
 
 export class CurrencyMismatchError extends DomainError {
-  constructor(left: string, right: string) {
-    super(`Currency mismatch: ${left} vs ${right}`);
+  // `context` diz de quem é a moeda esperada (por exemplo, a wallet), para o log ser útil.
+  constructor(left: string, right: string, context?: string) {
+    super(
+      `Currency mismatch: ${left} vs ${right}${context ? ` (${context})` : ''}`,
+    );
   }
 }
