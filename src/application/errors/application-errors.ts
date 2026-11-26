@@ -43,6 +43,21 @@ export class IdempotencyKeyReusedError extends ApplicationError {
   }
 }
 
+// O mesmo messageId chegou com um conteúdo diferente: bug do produtor, não do provedor
+// final. Erro PERMANENTE (a Fase 5 manda para a DLQ): reenviar não resolve, e processar
+// poderia aplicar a operação errada.
+export class InboxMessageReusedError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(
+    readonly consumerName: string,
+    readonly messageId: string,
+  ) {
+    super(
+      `Message ${messageId} of consumer ${consumerName} was already received with a different payload`,
+    );
+  }
+}
+
 // O (provedor, id externo) já existe com outra chave de idempotência (409).
 export class ExternalIdConflictError extends ApplicationError {
   readonly code = FailureCode.ExternalIdConflict;

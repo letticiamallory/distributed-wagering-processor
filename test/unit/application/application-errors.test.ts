@@ -10,6 +10,7 @@ import {
   DuplicateKeyError,
   ExternalIdConflictError,
   IdempotencyKeyReusedError,
+  InboxMessageReusedError,
   InvalidCommandError,
   TransactionNotFoundError,
   WalletAlreadyExistsError,
@@ -70,6 +71,12 @@ describe('application errors', () => {
       false,
     ],
     [
+      'InboxMessageReusedError',
+      new InboxMessageReusedError('wager-transactions-consumer', 'msg-1'),
+      ApiOnlyErrorCode.InternalError,
+      false,
+    ],
+    [
       'DependencyUnavailableError',
       new DependencyUnavailableError('lock timeout'),
       FailureCode.DependencyUnavailable,
@@ -109,6 +116,12 @@ describe('application errors', () => {
       new ExternalIdConflictError('provider-a', 'ext-1').message,
     ).toContain('ext-1');
     expect(new WalletNotFoundError('wallet-1').message).toContain('wallet-1');
+    const reused = new InboxMessageReusedError(
+      'wager-transactions-consumer',
+      'msg-1',
+    );
+    expect(reused.message).toContain('msg-1');
+    expect(reused.message).toContain('wager-transactions-consumer');
     expect(new WalletAlreadyExistsError('player-1', 'BRL').message).toContain(
       'player-1',
     );

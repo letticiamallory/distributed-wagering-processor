@@ -143,6 +143,24 @@ describe('InboxRepository', () => {
     ).toBeUndefined();
   });
 
+  test('the reader (no transaction) sees only what was COMMITTED, and always reads fresh', async () => {
+    const m = message();
+    expect(
+      await db().inboxReader.find(m.consumerName, m.messageId),
+    ).toBeUndefined();
+
+    let seenInside: unknown = 'not checked';
+    await db().uow.run(async (r) => {
+      await r.inbox.tryReceive(m);
+      seenInside = await db().inboxReader.find(m.consumerName, m.messageId);
+    });
+    expect(seenInside).toBeUndefined(); // ainda não commitou
+
+    const found = await db().inboxReader.find(m.consumerName, m.messageId);
+    expect(found?.payloadHash).toBe(HASH);
+    expect(found?.isProcessed()).toBe(false);
+  });
+
   test('markProcessed is stored', async () => {
     const m = message();
     await db().uow.run(async (r) => r.inbox.tryReceive(m));
