@@ -1,6 +1,6 @@
 # ADR-0007: Lock pessimista por wallet
 
-Status: Proposto · Data: 2026-11-25
+Status: Aceito · Data: 2026-11-25
 
 ## Contexto
 Várias instâncias da aplicação (e vários consumidores SQS) podem debitar a mesma wallet ao
@@ -13,23 +13,31 @@ Cada operação financeira roda numa única transação `READ COMMITTED` e **tra
 wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 
 - **Como:** `em.transactional(...)` do MikroORM abre a transação, e a leitura da wallet usa
-  `LockMode.PESSIMISTIC_WRITE`. Logo depois do `BEGIN`, `SET LOCAL lock_timeout = '5s'`
-  vale só para essa transação.
+  `LockMode.PESSIMISTIC_WRITE`. O SQL real, capturado do MikroORM, é: `start transaction
+  isolation level read committed`; `SET LOCAL lock_timeout = 5000` (em milissegundos, vale só
+  para essa transação e morre no `COMMIT`); `select ... from "wallets" ... for update`; `commit`.
 - **Uma wallet por transação.** O caso de uso trava só a wallet da operação, então duas
   transações nunca esperam uma pela outra em ciclo: não há deadlock por desenho. A referência
-  de uma reversão é lida sem lock (ela pertence à mesma wallet, ou a política a recusa com
-  `REFERENCE_MISMATCH` antes de usar o que leu).
+  de uma reversão é lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
+  **toda gravação em `wager_transactions` de uma wallet acontece com o lock dessa wallet**,
+  inclusive a do worker de `PENDING_REFERENCE` (Fase 5). Como a referência pertence à mesma
+  wallet, quem tem o lock a vê estável: ninguém pode mudá-la enquanto a decisão é tomada. Se
+  ela pertencer a outra wallet, nada a protege, mas a política a recusa com
+  `REFERENCE_MISMATCH` antes de usar o que leu. Quem quebrar essa regra (gravar numa wallet
+  sem o lock dela) quebra o ADR.
 - **Duas barreiras atrás do lock**, para o caso de um bug no código:
   `UPDATE wallets ... WHERE id = $1 AND version = $esperada` precisa afetar exatamente 1 linha,
   e `CHECK (balance >= 0)` recusa o saldo negativo no banco (ADR-0004).
 - **Timeout:** se o lock não sai em 5s (`55P03`), a operação falha como transitória
   (`DEPENDENCY_UNAVAILABLE`, 503 com `Retry-After`) sem gravar nada. O provedor reenvia a
   mesma chave com segurança, por causa da idempotência (ADR-0008).
-- **Pool:** pelo menos 20 conexões e no máximo 1s de espera por uma conexão livre, ambos por
-  variável de ambiente. Com o pool cheio o erro é o mesmo 503, não uma fila infinita.
+- **Pool:** até 20 conexões por padrão (mínimo de 2) e no máximo 1s de espera por uma conexão
+  livre, por `DB_POOL_MIN`, `DB_POOL_MAX` e `DB_ACQUIRE_TIMEOUT_MS`. Com o pool cheio o erro é
+  o mesmo 503, não uma fila infinita. O `lock_timeout` de 5s é uma opção do `UnitOfWork`
+  (`lockTimeoutMs`); a variável de ambiente que o configura entra com o módulo do Nest.
 - **Gravação explícita.** A transação e as gravações dentro dela usam `em.transactional` e o
-  lock do MikroORM, mas os `INSERT` e `UPDATE` são `nativeInsert` e `nativeUpdate`, em vez do
-  identity map com `flush`. Motivos:
+  lock do MikroORM, mas os `INSERT` e `UPDATE` são `em.insert` e `em.nativeUpdate` (no v7 não
+  existe `nativeInsert`), em vez do identity map com `flush`. Motivos:
   1. A ordem das gravações é a ordem das FKs e do trigger de estado final (a transação já
      nasce no estado final, depois o saldo, depois o ledger). Um `flush` decide a ordem sozinho.
   2. O `UPDATE ... AND version` precisa confirmar 1 linha afetada; o identity map esconde isso.

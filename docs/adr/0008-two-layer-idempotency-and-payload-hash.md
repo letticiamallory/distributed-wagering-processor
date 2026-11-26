@@ -30,6 +30,13 @@ e o saldo da época (`balance_after`), não o saldo de hoje:
 | Mesma chave, mesmo hash | Replay do resultado guardado, sem efeito colateral |
 | Mesma chave, hash diferente | 409 `IDEMPOTENCY_KEY_REUSED` |
 | Chave nova, mas `(provider_id, external_transaction_id)` já existe | 409 `EXTERNAL_ID_CONFLICT` |
+| Wallet inexistente | 404 `WALLET_NOT_FOUND`, **nada gravado** (veja abaixo) |
+
+**Wallet inexistente não deixa rastro.** A FK de `wager_transactions.wallet_id` impede gravar
+uma transação para uma wallet que não existe, então `WALLET_NOT_FOUND` não vira linha, e
+reenviar a mesma chave é **processado de novo**, não é replay. É o comportamento desejado:
+se a wallet passar a existir, a mesma chave é aceita. Na inbox, o rollback desfaz também a
+linha da mensagem; como o consumidor SQS reage a esse 404 fica para o ADR-0011 (Fase 5).
 
 **Duas checagens, uma sem lock e outra com.** O caminho rápido (antes da transação, sem lock)
 resolve quase todos os replays sem travar nada. A mesma checagem se repete **depois** de
