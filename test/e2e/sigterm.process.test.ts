@@ -119,6 +119,17 @@ describe('SIGTERM on a real process with a message in flight', () => {
         ]);
         expect(early).toBe('still running');
 
+        // Enquanto termina a mensagem, o processo sai de rotação: ready 503, live ainda 200.
+        const ready = await fetch(`http://127.0.0.1:${port}/health/ready`);
+        expect(ready.status).toBe(503);
+        expect(await ready.json()).toEqual({
+          status: 'shutting_down',
+          checks: {},
+        });
+        expect(
+          (await fetch(`http://127.0.0.1:${port}/health/live`)).status,
+        ).toBe(200);
+
         release(); // a mensagem termina: commit, delete, e só então o processo sai
         await holding;
         const exitCode = await Promise.race([

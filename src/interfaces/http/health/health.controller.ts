@@ -21,14 +21,17 @@ export class HealthController {
   // resposta diz QUAL caiu, e nada além disso (nada de string de conexão nem de texto de erro).
   @Get('ready')
   async ready(@Res({ passthrough: true }) response: Response): Promise<{
-    status: 'ok' | 'unavailable';
+    status: 'ok' | 'unavailable' | 'shutting_down';
     checks: Record<string, 'up' | 'down'>;
   }> {
-    const { ok, checks } = await this.health.ready();
+    const { ok, checks, shuttingDown } = await this.health.ready();
     if (!ok) {
       response.status(503);
       response.setHeader('Retry-After', String(this.config.retryAfterSeconds));
     }
-    return { status: ok ? 'ok' : 'unavailable', checks };
+    return {
+      status: shuttingDown ? 'shutting_down' : ok ? 'ok' : 'unavailable',
+      checks,
+    };
   }
 }

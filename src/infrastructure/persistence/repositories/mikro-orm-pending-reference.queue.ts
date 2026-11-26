@@ -17,6 +17,19 @@ export class MikroOrmPendingReferenceQueue extends PendingReferenceQueue {
     super();
   }
 
+  async countPending(): Promise<number> {
+    try {
+      const rows = (await this.em
+        .getConnection()
+        .execute(
+          `SELECT count(*)::int AS n FROM wager_transactions WHERE status = 'PENDING_REFERENCE'`,
+        )) as Array<{ n: number }>;
+      return Number(rows[0]?.n ?? 0);
+    } catch (error) {
+      throw classifyPersistenceError(error);
+    }
+  }
+
   async reserveDue(
     limit: number,
     leaseMs: number,
