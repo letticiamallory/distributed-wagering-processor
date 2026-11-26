@@ -1,4 +1,5 @@
 import type { FailureCode } from '../errors/failure-code.js';
+import { PAYLOAD_HASH_PATTERN } from '../messaging/payload-hash.js';
 import type { Money } from '../money/money.js';
 import { LedgerDirection } from '../wallet/ledger-direction.js';
 import {
@@ -46,7 +47,6 @@ export interface CreateOpeningProps {
   createdAt: Date;
 }
 
-const PAYLOAD_HASH = /^[0-9a-f]{64}$/;
 const ALL_KINDS = Object.values(WagerTransactionKind);
 
 // Máquina de estados:
@@ -355,7 +355,7 @@ export class WagerTransaction {
         throw new InvalidWagerTransactionError(`${field} cannot be empty`);
       }
     }
-    if (!PAYLOAD_HASH.test(props.payloadHash)) {
+    if (!PAYLOAD_HASH_PATTERN.test(props.payloadHash)) {
       throw new InvalidWagerTransactionError(
         'payloadHash must be 64 lowercase hex characters (SHA-256)',
       );
