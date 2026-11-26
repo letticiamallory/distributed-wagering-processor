@@ -30,6 +30,11 @@ beforeAll(async () => {
   const connection = admin.em.getConnection();
   await connection.execute(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)`);
   await connection.execute(`CREATE DATABASE ${DB_NAME}`);
+  // Mesmo ajuste do wallet_test (scripts/init-db.sql): o COMMIT não espera o fsync. É por
+  // banco, então um banco recém-criado não herda; precisa ser feito aqui.
+  await connection.execute(
+    `ALTER DATABASE ${DB_NAME} SET synchronous_commit = off`,
+  );
   orm = await MikroORM.init({ ...config, clientUrl: url.toString() });
 }, 30_000);
 
@@ -58,6 +63,13 @@ async function schemaObjects() {
     functions: rows.filter((r) => r.kind === 'function').map((r) => r.name),
   };
 }
+
+test('the throwaway database also commits without waiting for the fsync', async () => {
+  const rows = await orm.em
+    .getConnection()
+    .execute<{ synchronous_commit: string }[]>('SHOW synchronous_commit');
+  expect(rows[0]?.synchronous_commit).toBe('off');
+});
 
 test('all migrations go up, down to nothing, and up again', async () => {
   await orm.migrator.up();
