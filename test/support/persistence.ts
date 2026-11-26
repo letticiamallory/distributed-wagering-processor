@@ -10,6 +10,7 @@ import {
 } from '../../src/domain/wager/wager-transaction.js';
 import config from '../../src/infrastructure/persistence/mikro-orm.config.js';
 import { MikroOrmUnitOfWork } from '../../src/infrastructure/persistence/mikro-orm-unit-of-work.js';
+import type { MetricsPort } from '../../src/application/ports/metrics.port.js';
 import { MikroOrmOutboxRepository } from '../../src/infrastructure/persistence/repositories/mikro-orm-outbox.repository.js';
 import { MikroOrmInboxReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-inbox.reader.js';
 import { MikroOrmWagerTransactionReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-wager-transaction.reader.js';
@@ -23,6 +24,7 @@ export const T2 = new Date('2026-11-25T12:01:00.000Z');
 export const HASH = 'a'.repeat(64);
 
 export interface PersistenceOptions {
+  metrics?: MetricsPort;
   lockTimeoutMs?: number;
   pool?: { min?: number; max?: number };
   connectionTimeoutMillis?: number;
@@ -62,9 +64,10 @@ export async function openPersistence(
     orm,
     uow: new MikroOrmUnitOfWork(orm.em, {
       lockTimeoutMs: options.lockTimeoutMs ?? 5_000,
+      ...(options.metrics && { metrics: options.metrics }),
     }),
-    reader: new MikroOrmWagerTransactionReader(orm.em),
-    inboxReader: new MikroOrmInboxReader(orm.em),
+    reader: new MikroOrmWagerTransactionReader(orm.em, options.metrics),
+    inboxReader: new MikroOrmInboxReader(orm.em, options.metrics),
     outbox: new MikroOrmOutboxRepository(orm.em),
     queries,
     close: () => orm.close(),

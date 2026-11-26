@@ -1,5 +1,9 @@
 import { Logger } from '@nestjs/common';
 import type { Clock } from '../../application/ports/clock.js';
+import {
+  NOOP_METRICS,
+  type MetricsPort,
+} from '../../application/ports/metrics.port.js';
 import type {
   PendingReferenceQueue,
   ReservedPending,
@@ -38,6 +42,7 @@ export class PendingReferenceWorker {
     private readonly resolver: Pick<ResolvePendingReferenceUseCase, 'execute'>,
     private readonly clock: Clock,
     private readonly options: PendingWorkerOptions,
+    private readonly metrics: MetricsPort = NOOP_METRICS,
   ) {
     this.loop = new WorkerLoop(options.shutdownTimeoutMs);
   }
@@ -74,19 +79,32 @@ export class PendingReferenceWorker {
             switch (result.outcome) {
               case 'RESOLVED':
                 report.resolved++;
+                this.count('resolved');
+                this.logger.log({
+                  event: 'pending_reference_resolved',
+                  correlationId: `pending-worker:${item.transactionId}`,
+                  transactionId: item.transactionId,
+                  walletId: item.walletId,
+                  outcome: result.outcome,
+                  status: result.status,
+                });
                 break;
               case 'STILL_PENDING':
                 report.stillPending++;
+                this.count('still_pending');
                 break;
               default:
                 report.notPending++;
+                this.count('not_pending');
             }
           } catch (error) {
             // Erro de infraestrutura: nada foi gravado e a tentativa NÃO é gasta. O lease vence e
             // o item volta a ser devido.
             report.failed++;
+            this.count('failed');
             this.logger.warn({
               event: 'pending_resolve_failed',
+              correlationId: `pending-worker:${item.transactionId}`,
               transactionId: item.transactionId,
               walletId: item.walletId,
               message: error instanceof Error ? error.message : String(error),
@@ -96,6 +114,10 @@ export class PendingReferenceWorker {
       }),
     );
     return report;
+  }
+
+  private count(outcome: string): void {
+    this.metrics.increment('pending_reference_resolutions_total', { outcome });
   }
 
   start(): void {

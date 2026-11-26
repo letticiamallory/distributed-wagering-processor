@@ -4,6 +4,7 @@ import type { PendingReferenceSchedule } from '../../domain/wager/pending-refere
 import { WagerTransactionStatus } from '../../domain/wager/wager-transaction-status.js';
 import { WalletNotFoundError } from '../errors/application-errors.js';
 import type { Clock } from '../ports/clock.js';
+import { NOOP_METRICS, type MetricsPort } from '../ports/metrics.port.js';
 import type { IdGenerator } from '../ports/id-generator.js';
 import type { UnitOfWork } from '../ports/unit-of-work.js';
 import type { WagerTransactionReader } from '../ports/wager-transaction-repository.js';
@@ -50,6 +51,7 @@ export class ResolvePendingReferenceUseCase {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly schedule: PendingReferenceSchedule,
+    private readonly metrics: MetricsPort = NOOP_METRICS,
   ) {}
 
   async execute(
@@ -68,7 +70,7 @@ export class ResolvePendingReferenceUseCase {
       };
     }
 
-    return this.uow.run(async (repositories) => {
+    const result = await this.uow.run(async (repositories) => {
       const wallet = await repositories.wallets.lockById(known.walletId);
       if (!wallet) {
         throw new WalletNotFoundError(known.walletId);
@@ -119,5 +121,13 @@ export class ResolvePendingReferenceUseCase {
         }),
       } as const;
     });
+    // Só depois do commit: a reversão que estava pendente agora tem um status final.
+    if (result.outcome === 'RESOLVED') {
+      this.metrics.increment('wager_transactions_total', {
+        status: result.status,
+        kind: known.kind,
+      });
+    }
+    return result;
   }
 }

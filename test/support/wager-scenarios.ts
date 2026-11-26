@@ -1,5 +1,6 @@
 import { expect } from 'bun:test';
 import { Clock } from '../../src/application/ports/clock.js';
+import type { MetricsPort } from '../../src/application/ports/metrics.port.js';
 import type { IdGenerator } from '../../src/application/ports/id-generator.js';
 import type { InboxReader } from '../../src/application/ports/inbox-repository.js';
 import {
@@ -88,6 +89,7 @@ export interface Wallet {
 }
 
 export interface ScenarioOptions {
+  metrics?: MetricsPort;
   schedule?: PendingReferenceSchedule;
   start?: Date;
 }
@@ -170,6 +172,7 @@ export function createScenario(
       clock,
       overrides.ids ?? new UuidV7Generator(),
       overrides.schedule ?? schedule,
+      options.metrics,
     );
 
   const submit = (
@@ -197,6 +200,7 @@ export function createScenario(
       clock,
       overrides.ids ?? new UuidV7Generator(),
       overrides.schedule ?? schedule,
+      options.metrics,
     );
 
   const resolve = (transactionId: string, useCase = resolver()) =>

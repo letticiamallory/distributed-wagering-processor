@@ -3,6 +3,10 @@ import type {
   Disposition,
   WagerMessageHandler,
 } from '../../application/messaging/wager-message-handler.js';
+import {
+  NOOP_METRICS,
+  type MetricsPort,
+} from '../../application/ports/metrics.port.js';
 import type { QueueGateway, QueueMessage } from './queue-gateway.js';
 
 export interface ConsumerOptions {
@@ -43,6 +47,7 @@ export class WagerSqsConsumer {
     private readonly gateway: QueueGateway,
     private readonly handler: WagerMessageHandler,
     private readonly options: ConsumerOptions,
+    private readonly metrics: MetricsPort = NOOP_METRICS,
   ) {}
 
   start(): void {
@@ -181,17 +186,30 @@ export class WagerSqsConsumer {
     }
 
     switch (disposition.action) {
-      case 'ACK':
+      case 'ACK': {
         this.logAck(message, disposition);
-        return this.acknowledge(message);
+        const acked = await this.acknowledge(message);
+        if (acked) {
+          this.metrics.increment('consumer_messages_total', {
+            outcome: 'acked',
+          });
+        }
+        return acked;
+      }
 
       case 'RETRY':
+        this.metrics.increment('consumer_messages_total', {
+          outcome: 'retried',
+        });
+        this.metrics.increment('wager_retries_total', {
+          component: 'consumer',
+        });
         this.logger.warn({
           event: 'message_retry',
           sqsMessageId: message.sqsMessageId,
           receiveCount: message.receiveCount,
           delaySeconds: disposition.delaySeconds,
-          ...identity(disposition),
+          ...identity(disposition, message),
           error: describe(disposition.error),
         });
         try {
@@ -217,7 +235,7 @@ export class WagerSqsConsumer {
           ...(disposition.failureCode && {
             failureCode: disposition.failureCode,
           }),
-          ...identity(disposition),
+          ...identity(disposition, message),
           error: describe(disposition.error),
         };
         const stack =
@@ -246,6 +264,13 @@ export class WagerSqsConsumer {
           });
           return false;
         }
+        // O envio para a DLQ foi confirmado: agora conta (e só então apaga a original).
+        this.metrics.increment('wager_dlq_messages_total', {
+          reason: disposition.reason,
+        });
+        this.metrics.increment('consumer_messages_total', {
+          outcome: 'dead_lettered',
+        });
         return this.acknowledge(message);
       }
     }
@@ -276,7 +301,7 @@ export class WagerSqsConsumer {
       sqsMessageId: message.sqsMessageId,
       outcome: disposition.outcome,
       replay: disposition.replay,
-      ...identity(disposition),
+      ...identity(disposition, message),
       ...(disposition.transactionId && {
         transactionId: disposition.transactionId,
       }),
@@ -292,15 +317,25 @@ export class WagerSqsConsumer {
   }
 }
 
-function identity(disposition: {
-  messageId?: string;
-  idempotencyKey?: string;
-}): { messageId?: string; idempotencyKey?: string } {
+function identity(
+  disposition: {
+    messageId?: string;
+    idempotencyKey?: string;
+    walletId?: string;
+    providerId?: string;
+  },
+  message: QueueMessage,
+): Record<string, string> {
   return {
+    // O id de correlação de uma mensagem é o messageId dela (o caso de uso o usa assim também);
+    // sem envelope válido, o id do próprio SQS.
+    correlationId: disposition.messageId ?? message.sqsMessageId,
     ...(disposition.messageId && { messageId: disposition.messageId }),
     ...(disposition.idempotencyKey && {
       idempotencyKey: disposition.idempotencyKey,
     }),
+    ...(disposition.walletId && { walletId: disposition.walletId }),
+    ...(disposition.providerId && { providerId: disposition.providerId }),
   };
 }
 
