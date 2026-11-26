@@ -1,7 +1,8 @@
 // Guarda das regras invioláveis do CLAUDE.md, rodado por `bun run check:money`:
 //   1. dinheiro nunca passa por number/float fora de src/domain/money/;
 //   2. decimal.js só aparece dentro de src/domain/money/;
-//   3. o domínio não importa Nest, MikroORM nem AWS SDK (ADR-0001);
+//   3. o domínio e a aplicação não importam Nest, MikroORM nem AWS SDK (ADR-0001); o zod,
+//      que só valida o comando, é permitido na aplicação;
 //   4. as camadas só apontam para dentro: domain não importa de application, infrastructure
 //      ou interfaces, e application não importa de infrastructure nem de interfaces (ADR-0001).
 // node:crypto continua permitido no domínio: é biblioteca padrão, sem I/O e determinística.
@@ -17,6 +18,7 @@ export type Rule =
   | 'no-number-conversion'
   | 'no-decimal-outside-money'
   | 'no-framework-in-domain'
+  | 'no-framework-in-application'
   | 'no-layer-violation';
 
 export interface Violation {
@@ -29,6 +31,7 @@ export interface Violation {
 
 const MONEY_DIR = 'src/domain/money/';
 const DOMAIN_DIR = 'src/domain/';
+const APPLICATION_DIR = 'src/application/';
 
 // Conversão numérica numa linha que fala de dinheiro. É uma heurística de linha: pega o
 // descuido comum (parseFloat(amount)), não prova a ausência de number em todo o código.
@@ -98,6 +101,7 @@ export function checkSources(files: SourceFile[]): Violation[] {
   for (const { path, content } of files) {
     const inMoney = path.startsWith(MONEY_DIR);
     const inDomain = path.startsWith(DOMAIN_DIR);
+    const inApplication = path.startsWith(APPLICATION_DIR);
     const forbiddenLayers = FORBIDDEN_IMPORTS[layerOf(path) as Layer] ?? [];
     content.split(/\r?\n/).forEach((raw, index) => {
       const code = codeOf(raw);
@@ -129,6 +133,12 @@ export function checkSources(files: SourceFile[]): Violation[] {
         report(
           'no-framework-in-domain',
           'the domain cannot import @nestjs, @mikro-orm or @aws-sdk (ADR-0001)',
+        );
+      }
+      if (inApplication && FRAMEWORK_IMPORT.test(code)) {
+        report(
+          'no-framework-in-application',
+          'the application cannot import @nestjs, @mikro-orm or @aws-sdk: use ports (ADR-0001)',
         );
       }
       for (const target of importedLayers(path, code)) {

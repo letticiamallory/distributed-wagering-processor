@@ -188,11 +188,7 @@ describe('check-money: the domain does not import frameworks (ADR-0001)', () => 
       'src/interfaces/http/x.ts',
       "import { Controller } from '@nestjs/common';",
     ],
-    [
-      'src/application/queue.ts',
-      "import { SQSClient } from '@aws-sdk/client-sqs';",
-    ],
-  ])('is allowed outside the domain: %s', (path, line) => {
+  ])('is allowed outside the domain and the application: %s', (path, line) => {
     expect(checkSources([file(path, line)])).toEqual([]);
   });
 
@@ -219,6 +215,57 @@ describe('check-money: the domain does not import frameworks (ADR-0001)', () => 
     expect(
       checkSources([
         file('src/domain/x.ts', "// não importe '@nestjs/common' aqui"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('check-money: the application does not import frameworks (ADR-0001)', () => {
+  test.each([
+    "import { Injectable } from '@nestjs/common';",
+    "import { Entity } from '@mikro-orm/core';",
+    "import { SQSClient } from '@aws-sdk/client-sqs';",
+    "const m = require('@mikro-orm/postgresql');",
+    "const m = await import('@nestjs/core');",
+  ])('fails inside src/application: %s', (line) => {
+    expect(rulesOf([file('src/application/use-cases/bet.ts', line)])).toEqual([
+      'no-framework-in-application',
+    ]);
+  });
+
+  test('zod is allowed: it validates the command, it is not a framework', () => {
+    expect(
+      checkSources([
+        file('src/application/commands/c.ts', "import { z } from 'zod';"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test('the domain keeps its own rule name', () => {
+    expect(
+      rulesOf([
+        file('src/domain/x.ts', "import { Injectable } from '@nestjs/common';"),
+      ]),
+    ).toEqual(['no-framework-in-domain']);
+  });
+
+  test.each([
+    ['src/infrastructure/x.ts', "import { Entity } from '@mikro-orm/core';"],
+    [
+      'src/interfaces/http/x.ts',
+      "import { Controller } from '@nestjs/common';",
+    ],
+  ])('is allowed outside domain and application: %s', (path, line) => {
+    expect(checkSources([file(path, line)])).toEqual([]);
+  });
+
+  test('a comment that mentions the framework is fine', () => {
+    expect(
+      checkSources([
+        file(
+          'src/application/x.ts',
+          "// sem @nestjs/common aqui: from '@nestjs/common'",
+        ),
       ]),
     ).toEqual([]);
   });
