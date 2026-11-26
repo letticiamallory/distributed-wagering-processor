@@ -3,9 +3,12 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import { Clock } from '../../application/ports/clock.js';
 import { IdGenerator } from '../../application/ports/id-generator.js';
 import { InboxReader } from '../../application/ports/inbox-repository.js';
+import { LedgerReader } from '../../application/ports/ledger-reader.js';
 import { MetricsPort } from '../../application/ports/metrics.port.js';
 import { OutboxReader } from '../../application/ports/outbox-repository.js';
 import { PendingReferenceQueue } from '../../application/ports/pending-reference-queue.js';
+import { ReconciliationReader } from '../../application/ports/reconciliation-reader.js';
+import { WalletReader } from '../../application/ports/wallet-reader.js';
 import { UnitOfWork } from '../../application/ports/unit-of-work.js';
 import { WagerTransactionReader } from '../../application/ports/wager-transaction-repository.js';
 import { PendingReferenceSchedule } from '../../domain/wager/pending-reference-schedule.js';
@@ -17,6 +20,11 @@ import { loadLockTimeoutMs } from './lock-timeout.config.js';
 import config from './mikro-orm.config.js';
 import { MikroOrmUnitOfWork } from './mikro-orm-unit-of-work.js';
 import { MikroOrmInboxReader } from './repositories/mikro-orm-inbox.reader.js';
+import {
+  MikroOrmLedgerReader,
+  MikroOrmReconciliationReader,
+  MikroOrmWalletReader,
+} from './repositories/mikro-orm-readers.js';
 import { MikroOrmOutboxRepository } from './repositories/mikro-orm-outbox.repository.js';
 import { MikroOrmPendingReferenceQueue } from './repositories/mikro-orm-pending-reference.queue.js';
 import { MikroOrmWagerTransactionReader } from './repositories/mikro-orm-wager-transaction.reader.js';
@@ -50,6 +58,24 @@ import { MikroOrmWagerTransactionReader } from './repositories/mikro-orm-wager-t
       inject: [MikroORM, MetricsPort],
     },
     {
+      provide: WalletReader,
+      useFactory: (orm: MikroORM, metrics: MetricsPort) =>
+        new MikroOrmWalletReader(orm.em, metrics),
+      inject: [MikroORM, MetricsPort],
+    },
+    {
+      provide: LedgerReader,
+      useFactory: (orm: MikroORM, metrics: MetricsPort) =>
+        new MikroOrmLedgerReader(orm.em, metrics),
+      inject: [MikroORM, MetricsPort],
+    },
+    {
+      provide: ReconciliationReader,
+      useFactory: (orm: MikroORM, metrics: MetricsPort) =>
+        new MikroOrmReconciliationReader(orm.em, metrics),
+      inject: [MikroORM, MetricsPort],
+    },
+    {
       // A outbox fora de transação: só as consultas de observabilidade (stats).
       provide: OutboxReader,
       useFactory: (orm: MikroORM) => new MikroOrmOutboxRepository(orm.em),
@@ -78,6 +104,9 @@ import { MikroOrmWagerTransactionReader } from './repositories/mikro-orm-wager-t
     WagerTransactionReader,
     InboxReader,
     OutboxReader,
+    WalletReader,
+    LedgerReader,
+    ReconciliationReader,
     PendingReferenceQueue,
     PostgresProbe,
     Clock,

@@ -7,11 +7,19 @@ import { UnitOfWork } from '../../../application/ports/unit-of-work.js';
 import { WagerTransactionReader } from '../../../application/ports/wager-transaction-repository.js';
 import { ProcessWagerTransactionUseCase } from '../../../application/use-cases/process-wager-transaction.use-case.js';
 import { PendingReferenceSchedule } from '../../../domain/wager/pending-reference-schedule.js';
+import { GetTransactionUseCase } from '../../../application/use-cases/queries.use-cases.js';
+import { ProvidersController } from './providers.controller.js';
 import { WagerTransactionsController } from './wager-transactions.controller.js';
 
 @Module({
-  controllers: [WagerTransactionsController],
+  controllers: [WagerTransactionsController, ProvidersController],
   providers: [
+    {
+      provide: GetTransactionUseCase,
+      useFactory: (reader: WagerTransactionReader) =>
+        new GetTransactionUseCase(reader),
+      inject: [WagerTransactionReader],
+    },
     {
       provide: ProcessWagerTransactionUseCase,
       useFactory: (
