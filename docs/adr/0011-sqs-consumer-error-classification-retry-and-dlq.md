@@ -111,11 +111,15 @@ a reentrega vira replay (inbox + idempotência); se não saiu, nada foi gravado.
 Erro `critical` vai à DLQ e é logado no nível `fatal` (o mais alto do Logger do Nest), uma vez só,
 como o filtro HTTP faz. Nunca há ack silencioso.
 
-### 9. Ligado por padrão, desligado nos testes
+### 9. Ligado por padrão, desligado nos testes, e filas de teste separadas
 `SQS_CONSUMER_ENABLED` vale `true` por padrão (é o que o `docker compose up` espera). Em
-`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da Fase 4):
-só o teste que liga o consumidor, **com a fila criada por ele mesmo**, consome. Dois testes
-provam, com uma mensagem-sonda na `wager-transactions.fifo` real, que o app do e2e e os 3
+`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da Fase 4), e
+`SQS_QUEUE_NAME`/`SQS_DLQ_NAME` apontam para filas **só de teste** (`test-app-wager-transactions*`).
+Resultado: a suíte passa com a stack inteira no ar (`docker compose up -d`, com o consumidor do app
+de verdade ligado nas filas reais), porque **nenhum teste envia mensagem às filas reais**. O único
+teste que as toca (`smoke.test.ts`) só lê nomes e atributos (o redrive). Cada teste que consome
+cria o seu par de filas, com nome único.
+Uma mensagem-sonda, enviada à fila configurada do ambiente de teste, prova que o app do e2e e os 3
 processos da suíte de concorrência não a consomem.
 
 ## Alternativas consideradas
@@ -135,8 +139,7 @@ processos da suíte de concorrência não a consomem.
   limite de concorrência por grupo é trabalho futuro, junto da fila por wallet do ADR-0007.
 − O long polling abortado pelo SIGTERM pode deixar uma mensagem invisível até a visibilidade da
   fila (30 s) vencer; não há perda.
-− No Windows o `SIGTERM` não executa handlers: o teste prova o *wiring* (`createApp()` registra o
-  handler) e o `app.close()` de verdade, não o sinal do sistema operacional.
+− No Windows o `SIGTERM` não executa handlers: lá o teste prova o *wiring* (`createApp()`
+  registra o handler) e o `app.close()` de verdade. O SIGTERM real, num processo real com uma
+  mensagem em andamento, roda no Linux/CI (`test/e2e/sigterm.process.test.ts`, pulado no Windows).
 − Uma duplicata na DLQ é possível na janela entre o envio e o delete (descrita acima).
-− Se um app com o consumidor ligado (ex.: o container `app` do compose) estiver no ar durante os
-  testes, ele disputa a `wager-transactions.fifo` real e o teste da sonda falha, com razão.
