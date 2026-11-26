@@ -73,6 +73,6 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
   que o enunciado não prevê; o caso de uso precisa calcular `hasSettledWin` sob o lock da
   wallet, para duas requisições não decidirem com a mesma foto do banco.
 − Não há teto para a soma dos WINs de uma BET: o valor do prêmio é do provedor. Quem confere
-  se o total pago faz sentido é a reconciliação (Fase 8), que sinaliza e não corrige.
+  se o total pago faz sentido é o provedor; a reconciliação (ADR-0015) só confere saldo contra ledger e não avalia a soma dos prêmios.
 − O caminho normal é o caso de uso (Fase 3) recusar a segunda reversão como rejeição de negócio;
   o índice é a rede de segurança para bugs e corridas, não o fluxo principal.
