@@ -92,3 +92,11 @@ O `GET /metrics` fica aberto como o `/health`: quem o raspa (o Prometheus) não 
 tem token. Só expõe contagens e latências, nunca um valor, uma wallet ou um jogador (há um teste). O
 teste que percorre todos os controllers agora aceita sem o guard **só** o de health e o de métricas.
 Num ambiente real, o `/metrics` ficaria numa porta ou rede internas.
+
+## Adendo (Fase 8, ADR-0015): o guard também confere o `:providerId` da rota
+O `ProviderAuthGuard` compara o `providerId` do **corpo** com o que o token pode representar (403 se
+não puder). Com as consultas, ele passou a conferir também o `:providerId` da **rota**
+(`GET /providers/:providerId/wagering/transactions/:externalId`): um token do provedor A não lê as
+transações do provedor B. As consultas por id (`/wallets/:id`, `/wagering/transactions/:id`) não
+nomeiam provedor e só exigem credencial. O teste que percorre todos os controllers continua exigindo
+o guard em todos, menos health e metrics.

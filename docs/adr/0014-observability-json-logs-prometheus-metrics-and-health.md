@@ -105,10 +105,12 @@ Regras que mantêm as séries honestas:
 `wallet_reconciliation_divergences{kind}` (gauge: `balance_mismatch`, `ledger_gap`,
 `negative_balance`), `wallet_reconciliation_last_run_timestamp_seconds` e
 `wallet_reconciliation_runs_total{result}` estão no catálogo, e `reportReconciliation()` (aplicação)
-é a função que a reconciliação chamará ao fim de cada execução. Uma execução que **terminou**
+é a função que a reconciliação chama ao fim de cada execução. **Atualização (Fase 8, ADR-0015):** a
+reconciliação por wallet a usa desde então, e ganhou o contador `wallet_reconciliation_divergences_total`
+(o que alerta, porque o gauge é o da última execução); o gauge `pending_reference_transactions` e o
+503 do `/health/ready` no encerramento também entraram na Fase 8. Uma execução que **terminou**
 substitui os valores (o tipo que não aparece volta a 0, para a divergência corrigida sair do alerta);
-uma que **falhou** só conta a falha e deixa os valores e o "último sucesso" como estavam. Um teste
-garante que **nenhum código de produção a chama ainda**.
+uma que **falhou** só conta a falha e deixa os valores e o "último sucesso" como estavam. (O teste que garantia "ninguém a chama" virou "só o `ReconcileWalletUseCase` a chama".)
 
 ## Alternativas consideradas
 - **pino** para os logs: mais rápido e maduro, mas é uma dependência a mais para uma aplicação que já
