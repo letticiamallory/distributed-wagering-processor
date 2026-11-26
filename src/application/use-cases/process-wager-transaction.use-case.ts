@@ -1,34 +1,28 @@
 import type { FailureCode } from '../../domain/errors/failure-code.js';
 import { InboxMessage } from '../../domain/messaging/inbox-message.js';
-import { WagerTransactionProcessed } from '../../domain/messaging/events/wager-transaction-processed.js';
-import { WagerTransactionRejected } from '../../domain/messaging/events/wager-transaction-rejected.js';
-import { WalletBalanceChanged } from '../../domain/messaging/events/wallet-balance-changed.js';
-import { OutboxMessage } from '../../domain/messaging/outbox-message.js';
 import type { MoneyProps } from '../../domain/money/money.js';
-import { LedgerDirection } from '../../domain/wallet/ledger-direction.js';
-import type { WalletLedgerEntry } from '../../domain/wallet/wallet-ledger-entry.js';
+import type { PendingReferenceSchedule } from '../../domain/wager/pending-reference-schedule.js';
 import { computePayloadHash } from '../../domain/wager/wager-payload-hash.js';
-import { WagerPolicy } from '../../domain/wager/wager-policy.js';
-import { WagerTransactionKind } from '../../domain/wager/wager-transaction-kind.js';
-import { WagerTransactionStatus } from '../../domain/wager/wager-transaction-status.js';
+import type { WagerTransactionStatus } from '../../domain/wager/wager-transaction-status.js';
 import { WagerTransaction } from '../../domain/wager/wager-transaction.js';
 import {
   type ProcessWagerTransactionCommand,
   parseProcessWagerTransactionCommand,
 } from '../commands/process-wager-transaction.command.js';
 import {
-  ApplicationError,
+  DuplicateKeyError,
   ExternalIdConflictError,
   IdempotencyKeyReusedError,
   InboxMessageReusedError,
+  UnresolvedIdempotencyRaceError,
   WalletNotFoundError,
 } from '../errors/application-errors.js';
-import { ApiOnlyErrorCode } from '../errors/api-error-code.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGenerator } from '../ports/id-generator.js';
 import type { InboxReader } from '../ports/inbox-repository.js';
 import type { Repositories, UnitOfWork } from '../ports/unit-of-work.js';
 import type { WagerTransactionReader } from '../ports/wager-transaction-repository.js';
+import { settleWagerTransaction } from './settle-wager-transaction.js';
 
 export interface ProcessWagerContext {
   // Header Idempotency-Key (HTTP) ou data.idempotencyKey (SQS). Validado dentro do caso de uso.
@@ -48,21 +42,25 @@ export interface ProcessWagerResult {
   idempotentReplay: boolean;
 }
 
-// Pedaço que ainda não existe: falha alto e explícito, em vez de fingir (ou de aplicar uma
-// regra pela metade). Sai no commit 6 (PENDING_REFERENCE).
-export class NotSupportedYetError extends ApplicationError {
-  readonly code = ApiOnlyErrorCode.InternalError;
-  constructor(readonly feature: string) {
-    super(`${feature} is not supported yet`);
-  }
-}
-
 // Onde a idempotência é consultada: antes da transação (leitores sem lock) e de novo sob o
 // lock (os repositórios da transação). Os dois lados têm a mesma forma.
 interface Lookups {
   transactions: WagerTransactionReader;
   inbox: InboxReader;
 }
+
+// As duas constraints UNIQUE que significam "outra requisição, de outra wallet, gravou a mesma
+// chave (ou o mesmo id externo) entre as nossas checagens e a nossa gravação". As checagens de
+// idempotência rodam SOB o lock de UMA wallet; duas wallets diferentes não se travam entre si,
+// então só o índice único as separa. Qualquer outro 23505 é bug.
+const IDEMPOTENCY_RACE_CONSTRAINTS = new Set([
+  'uq_wtx_idempotency_key',
+  'uq_wtx_provider_external',
+]);
+
+const isIdempotencyRace = (error: unknown): error is DuplicateKeyError =>
+  error instanceof DuplicateKeyError &&
+  IDEMPOTENCY_RACE_CONSTRAINTS.has(error.constraint);
 
 // O coração do sistema (ADR-0007 e ADR-0008): uma operação financeira, numa transação só.
 //
@@ -82,6 +80,7 @@ export class ProcessWagerTransactionUseCase {
     private readonly inboxReader: InboxReader,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly schedule: PendingReferenceSchedule,
   ) {}
 
   async execute(
@@ -107,6 +106,30 @@ export class ProcessWagerTransactionUseCase {
       referenceExternalTransactionId: command.referenceExternalTransactionId,
     });
 
+    // 3 a 10, com UMA reexecução se a corrida do 23505 acontecer: a transação do banco foi
+    // desfeita, nada ficou, e a segunda passada enxerga a linha da vencedora (replay ou o 409
+    // certo). Um segundo 23505 não pode acontecer: é bug, com log crítico.
+    try {
+      return await this.attempt(command, payloadHash, context);
+    } catch (error) {
+      if (!isIdempotencyRace(error)) {
+        throw error;
+      }
+    }
+    try {
+      return await this.attempt(command, payloadHash, context);
+    } catch (error) {
+      throw isIdempotencyRace(error)
+        ? new UnresolvedIdempotencyRaceError(error)
+        : error;
+    }
+  }
+
+  private async attempt(
+    command: ProcessWagerTransactionCommand,
+    payloadHash: string,
+    context: ProcessWagerContext,
+  ): Promise<ProcessWagerResult> {
     // 3. Caminho rápido: a maioria dos replays termina aqui, sem travar nada.
     const known = await this.findPriorOutcome(command, payloadHash, context, {
       transactions: this.reader,
@@ -143,7 +166,8 @@ export class ProcessWagerTransactionUseCase {
       return known;
     }
 
-    // 6 e 7. O domínio decide; aqui só reunimos o que a política precisa saber.
+    // 6 a 8. O domínio decide e o módulo comum grava (a mesma lógica da resolução de uma
+    //        pendente): transação no estado em que ficou, saldo, ledger, eventos e o acordar.
     const now = this.clock.now();
     const transaction = WagerTransaction.create({
       id: this.ids.next(),
@@ -163,104 +187,17 @@ export class ProcessWagerTransactionUseCase {
       correlationId: context.correlationId,
       createdAt: now,
     });
-
-    const reference =
-      command.referenceExternalTransactionId === undefined
-        ? undefined
-        : await repositories.transactions.findByProviderAndExternalId(
-            command.providerId,
-            command.referenceExternalTransactionId,
-          );
-    // Os dois são calculados AQUI, sob o lock desta wallet: ninguém mexe nas transações dela
-    // entre a leitura e a gravação (ADR-0007), então a foto vale até o commit.
-    const alreadyReversed = reference
-      ? await repositories.transactions.hasProcessedReversal(reference.id)
-      : false;
-    // Só interessa para REFUND/ROLLBACK de uma BET: um prêmio pago impede devolver a aposta.
-    const hasSettledWin =
-      transaction.requiresReference() &&
-      reference?.kind === WagerTransactionKind.Bet
-        ? await repositories.transactions.hasSettledWin(reference.id)
-        : false;
-
-    const decision = WagerPolicy.decide({
-      wallet,
-      transaction,
-      reference,
-      alreadyReversed,
-      hasSettledWin,
-      attemptsExhausted: false,
-    });
-    if (decision.type === 'waitForReference') {
-      throw new NotSupportedYetError('PENDING_REFERENCE (commit 6)');
-    }
-
-    // O saldo observado é SEMPRE o da wallet, na moeda dela (ADR-0006).
-    const expectedVersion = wallet.version;
-    let entry: WalletLedgerEntry | undefined;
-    if (decision.type === 'reject') {
-      transaction.reject(decision.code, wallet.balance);
-    } else {
-      if (decision.direction !== null) {
-        const movement = {
-          money: transaction.money,
-          transactionId: transaction.id,
-          entryId: this.ids.next(),
-          at: now,
-        };
-        entry =
-          decision.direction === LedgerDirection.Debit
-            ? wallet.debit(movement)
-            : wallet.credit(movement);
-      }
-      transaction.markProcessed({
-        // Uma BET não referencia nada: a referência só vale para WIN e LOSS.
-        ...(reference &&
-          transaction.kind !== WagerTransactionKind.Bet && {
-            referenceTransactionId: reference.id,
-          }),
-        balanceAfter: wallet.balance,
-        at: now,
-      });
-    }
-
-    // 8. Nesta ordem, por causa das FKs e do trigger de estado final: a transação já nasce no
-    //    estado final; depois o saldo (com a versão esperada) e o lançamento que a aponta.
-    await repositories.transactions.insert(transaction);
-    if (entry) {
-      await repositories.wallets.save(wallet, expectedVersion);
-      await repositories.ledger.append(entry);
-    }
-
-    const eventContext = () => ({
-      eventId: this.ids.next(),
-      correlationId: context.correlationId,
-      causationId: transaction.id,
-      occurredAt: now,
-    });
-    if (transaction.status === WagerTransactionStatus.Rejected) {
-      await repositories.outbox.add(
-        OutboxMessage.enqueue(
-          WagerTransactionRejected.from(transaction, eventContext()),
-          now,
-        ),
-      );
-    } else {
-      await repositories.outbox.add(
-        OutboxMessage.enqueue(
-          WagerTransactionProcessed.from(transaction, eventContext()),
-          now,
-        ),
-      );
-      if (entry) {
-        await repositories.outbox.add(
-          OutboxMessage.enqueue(
-            WalletBalanceChanged.from(wallet, entry, eventContext()),
-            now,
-          ),
-        );
-      }
-    }
+    await settleWagerTransaction(
+      { ids: this.ids, schedule: this.schedule },
+      repositories,
+      {
+        wallet,
+        transaction,
+        now,
+        correlationId: context.correlationId,
+        mode: 'insert',
+      },
+    );
 
     if (context.inbox) {
       const message = InboxMessage.receive({

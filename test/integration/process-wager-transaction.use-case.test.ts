@@ -21,6 +21,7 @@ import {
   type ProcessWagerResult,
 } from '../../src/application/use-cases/process-wager-transaction.use-case.js';
 import { FailureCode } from '../../src/domain/errors/failure-code.js';
+import { PendingReferenceSchedule } from '../../src/domain/wager/pending-reference-schedule.js';
 import { computePayloadHash } from '../../src/domain/wager/wager-payload-hash.js';
 import { WagerTransactionKind } from '../../src/domain/wager/wager-transaction-kind.js';
 import { WagerTransactionStatus } from '../../src/domain/wager/wager-transaction-status.js';
@@ -126,6 +127,7 @@ const build = (
     overrides.inboxReader ?? db().inboxReader,
     new FixedClock(NOW),
     overrides.ids ?? new UuidV7Generator(),
+    new PendingReferenceSchedule(),
   );
 
 function submit(
@@ -2518,61 +2520,4 @@ describe('ProcessWagerTransaction: the unique index is the LAST line of defense 
     expect(win.status).toBe(WagerTransactionStatus.Processed); // o que a checagem normalmente impede
     expect(await balanceOf(wallet)).toBe('180.00');
   });
-});
-
-describe('ProcessWagerTransaction: not supported yet (explicit errors, removed in commit 6)', () => {
-  test.each(['REFUND', 'ROLLBACK'] as const)(
-    'a %s whose reference does not exist yet fails loudly (PENDING_REFERENCE is commit 6) and writes nothing',
-    async (kind) => {
-      const wallet = await walletWith('100.00');
-
-      const error = await rejectionOf(
-        submit(reversalBody(wallet, kind, 'ext-that-never-arrived')),
-      );
-
-      expect(error).toMatchObject({
-        name: 'NotSupportedYetError',
-        code: 'INTERNAL_ERROR',
-      });
-      expect(await wagerRows(wallet.id)).toBe(0);
-      expect(await walletRow(wallet.id)).toMatchObject({
-        balance: '100.00',
-        version: 1,
-      });
-    },
-  );
-
-  test('a WIN whose reference does not exist yet fails loudly (PENDING_REFERENCE is commit 6) and writes nothing', async () => {
-    const wallet = await walletWith('100.00');
-    const input = body(wallet, {
-      kind: 'WIN',
-      money: { amount: '10.00', currency: 'BRL' },
-      referenceExternalTransactionId: 'ext-that-never-arrived',
-    });
-
-    const error = await rejectionOf(submit(input));
-
-    expect(error).toMatchObject({ name: 'NotSupportedYetError' });
-    expect(await wagerRows(wallet.id)).toBe(0);
-    expect(await walletRow(wallet.id)).toMatchObject({
-      balance: '100.00',
-      version: 1,
-    });
-  });
-});
-
-describe('ProcessWagerTransaction: left for the next commits (todo)', () => {
-  // Commit 6
-  test.todo(
-    'a reference that does not exist yet is PENDING_REFERENCE (202) and writes the pending event',
-  );
-  test.todo(
-    'a PROCESSED transaction wakes the PENDING_REFERENCE ones waiting for its external id',
-  );
-  test.todo(
-    'same key with another walletId: the 23505 race (both constraints) reruns once and answers 409',
-  );
-  test.todo(
-    'lock_timeout, deadlock, connection and full pool become DependencyUnavailableError (503)',
-  );
 });
