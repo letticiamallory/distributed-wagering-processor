@@ -1,9 +1,12 @@
 // Guarda das regras invioláveis do CLAUDE.md, rodado por `bun run check:money`:
 //   1. dinheiro nunca passa por number/float fora de src/domain/money/;
 //   2. decimal.js só aparece dentro de src/domain/money/;
-//   3. o domínio não importa Nest, MikroORM nem AWS SDK (ADR-0001).
+//   3. o domínio não importa Nest, MikroORM nem AWS SDK (ADR-0001);
+//   4. as camadas só apontam para dentro: domain não importa de application, infrastructure
+//      ou interfaces, e application não importa de infrastructure nem de interfaces (ADR-0001).
 // node:crypto continua permitido no domínio: é biblioteca padrão, sem I/O e determinística.
 import { readdirSync, readFileSync } from 'node:fs';
+import { posix } from 'node:path';
 
 export interface SourceFile {
   path: string; // sempre com "/" e relativo à raiz do projeto, por exemplo src/domain/x.ts
@@ -13,7 +16,8 @@ export interface SourceFile {
 export type Rule =
   | 'no-number-conversion'
   | 'no-decimal-outside-money'
-  | 'no-framework-in-domain';
+  | 'no-framework-in-domain'
+  | 'no-layer-violation';
 
 export interface Violation {
   path: string;
@@ -40,6 +44,41 @@ const FRAMEWORK_IMPORT = new RegExp(
   `${MODULE_REF}@(?:nestjs|mikro-orm|aws-sdk)/[^'"]*['"]`,
 );
 
+// Camadas de src/ e, para cada uma, as camadas que ela NÃO pode importar.
+type Layer = 'domain' | 'application' | 'infrastructure' | 'interfaces';
+const FORBIDDEN_IMPORTS: Partial<Record<Layer, Layer[]>> = {
+  domain: ['application', 'infrastructure', 'interfaces'],
+  application: ['infrastructure', 'interfaces'],
+};
+const LAYER_OF_PATH =
+  /^src\/(domain|application|infrastructure|interfaces)(?:\/|$)/;
+const MODULE_SPECIFIER = new RegExp(`${MODULE_REF}([^'"]+)['"]`, 'g');
+
+function layerOf(path: string): Layer | undefined {
+  return LAYER_OF_PATH.exec(path)?.[1] as Layer | undefined;
+}
+
+// Resolve o import contra a pasta do arquivo e devolve a camada de destino. Pacotes
+// ('decimal.js', 'node:crypto') não são camadas. O que conta é o caminho resolvido, não o
+// nome: src/domain/wallet/../infrastructure/x continua sendo domain.
+function importedLayers(path: string, code: string): Layer[] {
+  const layers: Layer[] = [];
+  for (const match of code.matchAll(MODULE_SPECIFIER)) {
+    const specifier = match[1] ?? '';
+    let target: string | undefined;
+    if (specifier.startsWith('.')) {
+      target = posix.normalize(posix.join(posix.dirname(path), specifier));
+    } else if (specifier.startsWith('src/')) {
+      target = posix.normalize(specifier);
+    }
+    const layer = target === undefined ? undefined : layerOf(target);
+    if (layer) {
+      layers.push(layer);
+    }
+  }
+  return layers;
+}
+
 // Tira comentários para que um texto como "nunca parseFloat(amount)" não vire falso positivo.
 function codeOf(line: string): string {
   const trimmed = line.trim();
@@ -59,6 +98,7 @@ export function checkSources(files: SourceFile[]): Violation[] {
   for (const { path, content } of files) {
     const inMoney = path.startsWith(MONEY_DIR);
     const inDomain = path.startsWith(DOMAIN_DIR);
+    const forbiddenLayers = FORBIDDEN_IMPORTS[layerOf(path) as Layer] ?? [];
     content.split(/\r?\n/).forEach((raw, index) => {
       const code = codeOf(raw);
       if (code === '') {
@@ -90,6 +130,14 @@ export function checkSources(files: SourceFile[]): Violation[] {
           'no-framework-in-domain',
           'the domain cannot import @nestjs, @mikro-orm or @aws-sdk (ADR-0001)',
         );
+      }
+      for (const target of importedLayers(path, code)) {
+        if (forbiddenLayers.includes(target)) {
+          report(
+            'no-layer-violation',
+            `${layerOf(path)} cannot import from ${target}: layers only point inward (ADR-0001)`,
+          );
+        }
       }
     });
   }
