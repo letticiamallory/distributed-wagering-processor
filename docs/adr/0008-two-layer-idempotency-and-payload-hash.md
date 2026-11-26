@@ -36,7 +36,7 @@ e o saldo da época (`balance_after`), não o saldo de hoje:
 uma transação para uma wallet que não existe, então `WALLET_NOT_FOUND` não vira linha, e
 reenviar a mesma chave é **processado de novo**, não é replay. É o comportamento desejado:
 se a wallet passar a existir, a mesma chave é aceita. Na inbox, o rollback desfaz também a
-linha da mensagem; como o consumidor SQS reage a esse 404 fica para o ADR-0011 (Fase 5).
+linha da mensagem; o consumidor SQS manda esse caso para a DLQ, sem apagar a possibilidade de reinjetar a mensagem depois de criar a wallet (ADR-0011).
 
 **Duas checagens, uma sem lock e outra com.** O caminho rápido (antes da transação, sem lock)
 resolve quase todos os replays sem travar nada. A mesma checagem se repete **depois** de

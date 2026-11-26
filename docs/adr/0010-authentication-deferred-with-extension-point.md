@@ -28,7 +28,7 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
   quando o corpo traz um `providerId`, exige que a identidade possa agir como ele (senão 403
   `PROVIDER_FORBIDDEN`). Autenticar vem antes de validar o corpo (401 antes de 400).
 - Um teste percorre **todos os controllers registrados** e falha se algum, exceto o de health,
-  estiver sem o guard: uma rota nova (as consultas da Fase 8) não pode esquecê-lo.
+  estiver sem o guard (as consultas da Fase 8 entraram sob essa regra; o `/metrics` é aberto como o health, ver o adendo da Fase 7).
 - Os casos de uso **não** conhecem identidade. A validação do `providerId` (não vazio, até 200
   caracteres, texto) mora no comando, então vale igual para HTTP e SQS.
 
@@ -53,8 +53,8 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
   provedor de jogos: quem cria a conta do jogador é o sistema que o cadastra, não o provedor que
   só envia apostas. A identidade ganharia um método de escopo (por exemplo `hasScope`) e o guard
   da rota de wallet o exigiria; os provedores receberiam só o escopo de transações.
-- **Consultas** (Fase 8): `GET /providers/:providerId/...` compara o parâmetro de rota com a
-  identidade, igual ao corpo.
+- **Consultas** (implementado na Fase 8, ver o adendo ao fim): o guard compara o `:providerId` da
+  rota com a identidade, igual ao corpo.
 - **Trocar a implementação:** uma classe nova que estende `ProviderIdentityPort` (a que lê o
   JWKS, com a biblioteca `jose`), ligada no módulo no lugar da `Unrestricted...`, mais a configuração
   (emissor, audiência, URL do JWKS) validada na subida como as demais variáveis. **Nenhum caso de

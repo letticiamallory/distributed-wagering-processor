@@ -73,7 +73,7 @@ pequeno.
 | `outbox_pending_messages`, `outbox_lag_seconds` | fila e idade do evento mais antigo | coletor, **na raspagem** |
 | `pending_reference_resolutions_total{outcome}` | resolved, still_pending, not_pending, failed | worker |
 | `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route}` | tráfego HTTP | middleware |
-| `wallet_reconciliation_*` | divergências por tipo, última execução, execuções (ver o item 4) | **Fase 8** |
+| `wallet_reconciliation_*` | divergências por tipo, última execução, execuções (ver o item 4) | caso de uso de reconciliação (ADR-0015) |
 
 Regras que mantêm as séries honestas:
 - **Conta-se depois do commit**: um `ROLLBACK` não aconteceu. O publisher e o caso de uso contam

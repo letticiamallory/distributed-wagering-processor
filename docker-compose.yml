@@ -14,7 +14,9 @@ services:
       # Cria o banco de testes (wallet_test) quando o volume nasce.
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-create-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wallet -d wallet"]
+      # -h 127.0.0.1 força TCP: num volume NOVO o servidor temporário da inicialização só escuta no
+      # socket Unix, e sem o -h o healthcheck ficaria verde antes de a porta 5432 existir.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U wallet -d wallet"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -51,6 +53,18 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Roda uma vez: aplica as migrations (o schema) antes de a app subir. Sem isso um banco novo não
+  # tem tabela nenhuma. Rodar de novo é seguro (o que já foi aplicado é pulado).
+  migrate:
+    build: .
+    command: ["bun", "src/infrastructure/persistence/run-migrations.ts"]
+    environment:
+      DATABASE_URL: postgres://wallet:wallet@postgres:5432/wallet
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   app:
     build: .
     environment:
@@ -66,6 +80,8 @@ services:
       postgres:
         condition: service_healthy
       queues-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
     # A imagem não tem curl; o próprio Bun faz a requisição. Falha (exit 1) se não for 2xx.
     healthcheck:

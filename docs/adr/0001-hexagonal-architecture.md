@@ -8,5 +8,5 @@ Hexagonal simples: `domain` ← `application` ← `infrastructure` e `interfaces
 - Camadas padrão do Nest (controller/service/repository): mistura regra de negócio com ORM e dificulta testar invariantes.
 - DDD completo (agregados, bus de comandos): cerimônia demais para o prazo.
 ## Consequências
-+ O domínio é testado sem banco nem Nest. − Mais arquivos (portas, mappers) e a fronteira hoje só vale por convenção (CLAUDE.md), sem lint que a imponha.
++ O domínio é testado sem banco nem Nest. − Mais arquivos (portas, mappers) e a fronteira é conferida por `bun run check:money` (que roda no CI): `src/domain` e `src/application` não podem importar Nest, MikroORM nem o AWS SDK (a aplicação pode usar `zod`).
 − Armadilha na borda: o Nest injeta pelo metadado do construtor, então um `import type` no controller passa em `typecheck` e `lint` e só quebra na subida. Usar import de valor; `test/integration/health.test.ts` sobe o `AppModule` e falha se isso acontecer (verificado).

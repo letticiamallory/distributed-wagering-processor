@@ -81,8 +81,8 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 + Sem deadlock por desenho, e o timeout vira um 503 que o provedor sabe tratar.
 − Operações na mesma wallet são serializadas. É o comportamento desejado, mas o limite de
   vazão de uma wallet muito quente é o de uma transação por vez.
-− O 503 por `lock_timeout` precisa de uma métrica (`lock_conflicts_total`) para o limite de 5s
-  ser ajustado com medição (Fase 7).
+− O 503 por `lock_timeout` é contado por causa em `wager_db_unavailable_total{reason}` (ADR-0014),
+  e o limite de 5 s pode ser ajustado com medição (`DB_LOCK_TIMEOUT_MS`).
 − Escrever `INSERT` e `UPDATE` à mão tira do MikroORM o rastreamento de mudanças: cada
   gravação nova é um método do repositório, com teste contra o Postgres real.
 

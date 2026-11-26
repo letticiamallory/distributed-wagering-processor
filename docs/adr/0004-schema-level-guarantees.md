@@ -42,7 +42,7 @@ Toda constraint tem nome (`ck_`, `uq_`, `fk_`, `pk_`), para o erro dizer qual re
 − Direção inválida gera uma mensagem menos específica (cita a aritmética).
 − Um superusuário pode desligar os triggers: eles protegem contra bug, não contra administrador.
 − O ledger não aceita DELETE, então os testes usam UUIDs novos e recriam o schema a cada execução.
-− A constraint diferida saldo ↔ ledger fica para uma migration própria, depois da Fase 3.
+− A constraint diferida saldo ↔ ledger **não foi implementada**. No lugar dela, o `FOR UPDATE`, a versão e o `UNIQUE (wallet_id, wallet_version)` protegem a escrita (ADR-0007), e a reconciliação somente leitura (ADR-0015) confere o saldo contra o ledger sob demanda: ela detecta, não impede.
 − A regra do PENDING mora na função do trigger (`forbid_terminal_change`, recriada por
   `CREATE OR REPLACE` na migration `wtx_pending_only_on_insert`); o `down` dela devolve a
   função anterior, e o teste de migrations desce e sobe só esse passo.

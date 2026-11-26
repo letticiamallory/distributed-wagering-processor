@@ -69,7 +69,7 @@ sequência completa de versões, sem buracos.
 ### 5. Observabilidade (a parte desta fase)
 `OutboxReader.stats(agora)` devolve `pending`, `due` e `lagSeconds` (idade do evento mais antigo
 não publicado), e o publisher os loga (`outbox_stats`) a cada 10 s quando há pendentes. O gauge
-`outbox_lag_seconds` e o registro de métricas ficam para a fase de observabilidade.
+`outbox_lag_seconds` e o registro de métricas vieram na fase seguinte (ADR-0014).
 
 ### 6. Ligar e desligar
 `OUTBOX_PUBLISHER_ENABLED` (padrão `true`), junto de `OUTBOX_QUEUE_NAME`, `OUTBOX_BATCH_SIZE` (1 a
