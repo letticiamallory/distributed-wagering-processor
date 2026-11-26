@@ -15,3 +15,4 @@ Uma decisão por arquivo, numeração sequencial e nunca reaproveitada. Para mud
 | [0011](0011-sqs-consumer-error-classification-retry-and-dlq.md) | Consumidor SQS: classificação de erros, retry com backoff e DLQ | Aceito |
 | [0012](0012-outbox-publisher-skip-locked-at-least-once.md) | Publisher da outbox: `SKIP LOCKED`, entrega at-least-once | Aceito |
 | [0013](0013-pending-reference-worker-and-retry-policy.md) | Worker de `PENDING_REFERENCE` e a política de retentativa | Aceito |
+| [0014](0014-observability-json-logs-prometheus-metrics-and-health.md) | Observabilidade: logs JSON, métricas Prometheus e health checks | Aceito |
