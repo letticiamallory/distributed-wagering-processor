@@ -100,10 +100,12 @@ describe('UnitOfWork: one transaction, one COMMIT', () => {
     ).toEqual(['append', 'constructor']);
   });
 
-  test("the outbox repository only knows how to add (publishing is the publisher's job, Phase 6)", () => {
+  // Desde a Fase 6 o publisher reivindica e marca eventos (ADR-0012), mas a superfície continua
+  // mínima: gravar, reivindicar, salvar o andamento e medir. Nada de apagar, nada de publicar.
+  test('the outbox repository exposes only add, claimDue, save and stats (it never publishes or deletes)', () => {
     expect(
       Object.getOwnPropertyNames(MikroOrmOutboxRepository.prototype).sort(),
-    ).toEqual(['add', 'constructor']);
+    ).toEqual(['add', 'claimDue', 'constructor', 'save', 'stats']);
   });
 });
 

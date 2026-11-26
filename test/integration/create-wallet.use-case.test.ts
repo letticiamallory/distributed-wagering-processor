@@ -546,7 +546,12 @@ describe('CreateWalletUseCase: all or nothing', () => {
         return db().uow.run((repositories) =>
           work({
             ...repositories,
-            outbox: { add: () => Promise.reject(failure) },
+            outbox: Object.assign(
+              Object.create(repositories.outbox) as typeof repositories.outbox,
+              {
+                add: () => Promise.reject(failure),
+              },
+            ),
           }),
         );
       }

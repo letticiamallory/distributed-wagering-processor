@@ -1229,7 +1229,9 @@ describe('ProcessWagerTransaction: all or nothing', () => {
       (failure: Error) =>
         (r: Repositories): Repositories => ({
           ...r,
-          outbox: { add: () => Promise.reject(failure) },
+          outbox: Object.assign(Object.create(r.outbox) as typeof r.outbox, {
+            add: () => Promise.reject(failure),
+          }),
         }),
     ],
   ])(
