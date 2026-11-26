@@ -12,3 +12,4 @@ Uma decisão por arquivo, numeração sequencial e nunca reaproveitada. Para mud
 | [0008](0008-two-layer-idempotency-and-payload-hash.md) | Idempotência em duas camadas e algoritmo do `payloadHash` | Aceito |
 | [0009](0009-http-status-map-and-error-format.md) | Mapa de status HTTP, formato único de erro e taxonomia de `failureCode` | Aceito |
 | [0010](0010-authentication-deferred-with-extension-point.md) | Autenticação adiada, com ponto de extensão | Aceito |
+| [0011](0011-sqs-consumer-error-classification-retry-and-dlq.md) | Consumidor SQS: classificação de erros, retry com backoff e DLQ | Aceito |
