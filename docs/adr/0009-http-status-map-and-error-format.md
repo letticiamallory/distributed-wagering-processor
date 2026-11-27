@@ -23,7 +23,7 @@ da API (`Record<ApiErrorCode, number>`): um código novo não compila sem um sta
 | Conflito de idempotência (`IDEMPOTENCY_KEY_REUSED`, `EXTERNAL_ID_CONFLICT`) ou `WALLET_ALREADY_EXISTS` | 409 | erro |
 | Corpo acima do limite | 413 | erro |
 | Falha transitória de infraestrutura | 503 + `Retry-After` | erro, `retryable: true` |
-| Erro inesperado (bug); também seria o replay de uma transação `FAILED`, que hoje nenhum caminho grava | 500 | erro |
+| Erro inesperado (bug), e o replay de uma transação `FAILED` (ADR-0016) | 500 | erro |
 
 **REJECTED é 422, não 200.** O provedor precisa saber só pelo status que a operação **não** foi
 aplicada e que reenviar não muda nada. O replay de uma rejeição também é 422: replay devolve a
@@ -46,10 +46,10 @@ Nest faz o mapeamento, então os controllers só convertem HTTP em comando e res
 o Node junta cabeçalhos repetidos em `"a, b"` e adivinhar qual vale poderia duplicar um débito.
 Um `idempotencyKey` dentro do corpo é ignorado e não entra no hash.
 
-**Replay de FAILED (preparado, não usado).** Hoje nenhum caminho do código grava `FAILED`, então
-esta resposta não acontece. O mapeamento está pronto para quando o estado for usado: uma transação
-em `FAILED` é final (o trigger a trava), e a mesma chave devolveria sempre 500, `INTERNAL_ERROR`,
-`retryable: false`, com o `failureCode` gravado e o `transactionId` para o suporte achar a linha.
+**Replay de FAILED.** Uma transação em `FAILED` (gravada nos gatilhos do ADR-0016, com
+`PROCESSING_FAILED`) é final (o trigger a trava), então a mesma chave devolve sempre 500,
+`INTERNAL_ERROR`, `retryable: false`, com o `failureCode` gravado e o `transactionId` para o suporte
+achar a linha.
 
 **503.** Falha transitória (`lock_timeout`, pool cheio, banco fora, deadlock): `Retry-After` em
 segundos inteiros (`RETRY_AFTER_SECONDS`, padrão 1, validado na subida). Nada foi gravado; o
@@ -80,5 +80,5 @@ regra de negócio são 422 onde quer que apareçam.
 + O provedor decide reenviar, corrigir ou desistir só pelo status e por `retryable`.
 + Um bug de mapeamento quebra um teste (a tabela é exaustiva), não a produção.
 − Dois formatos de corpo de erro (o envelope e o resultado do 422) que o cliente precisa conhecer.
-− O replay de FAILED (que hoje não acontece: nenhum caminho do código grava `FAILED`) seria 500
-  mesmo sendo uma resposta guardada, para o provedor não tratá-lo como sucesso nem tentar de novo.
+− O replay de FAILED (ADR-0016) é 500 mesmo sendo uma resposta guardada, para o provedor não
+  tratá-lo como sucesso nem tentar de novo.

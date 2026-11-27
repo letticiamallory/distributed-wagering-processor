@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { DomainError } from '../../domain/errors/domain-error.js';
+import type { DeliveryFailureLog } from '../ports/delivery-failure-log.js';
 import {
   STORABLE_TEXT_MESSAGE,
   isStorableText,
@@ -82,6 +84,11 @@ export interface WagerProcessor {
     input: unknown,
     context: ProcessWagerContext,
   ): Promise<ProcessWagerResult>;
+  // Grava a transação como FAILED (ADR-0016). Opcional: sem ele, nada vira FAILED.
+  fail?(
+    input: unknown,
+    context: ProcessWagerContext,
+  ): Promise<ProcessWagerResult>;
 }
 
 const notBlank = (value: string) => value.trim() !== '';
@@ -107,6 +114,8 @@ export class WagerMessageHandler {
   constructor(
     private readonly processor: WagerProcessor,
     private readonly policy: ConsumerRetryPolicy,
+    // A prova das falhas permanentes (ADR-0016). Sem ela, o consumidor nunca grava FAILED.
+    private readonly failures?: DeliveryFailureLog,
   ) {}
 
   async handle(body: string, context: MessageContext): Promise<Disposition> {
@@ -157,16 +166,18 @@ export class WagerMessageHandler {
       });
       return acknowledge(result, ids);
     } catch (error) {
-      return this.classify(error, ids, context);
+      return this.classify(error, data, ids, context);
     }
   }
 
-  // A tabela do ADR-0011: o tipo do erro decide o destino.
-  private classify(
+  // A tabela do ADR-0011: o tipo do erro decide o destino. O FAILED (ADR-0016) só nasce aqui, com a
+  // prova de que nenhuma entrega foi transitória.
+  private async classify(
     error: unknown,
+    data: Record<string, unknown>,
     ids: Identified,
     context: MessageContext,
-  ): Disposition {
+  ): Promise<Disposition> {
     if (error instanceof ApplicationError) {
       // O que nunca deveria acontecer: DLQ já, e o consumidor loga fatal.
       if (error.critical) {
@@ -178,9 +189,11 @@ export class WagerMessageHandler {
           ...ids,
         };
       }
-      // O banco recusou o dado: reenviar dá o mesmo erro. DLQ já, sem segurar a wallet com retries.
+      // O banco recusou o dado: reenviar dá o mesmo erro, então nunca há retry. Com a prova de que
+      // todas as entregas falharam assim, vira FAILED; sem ela, DLQ já.
       if (error instanceof PermanentDataError) {
-        return deadLetter('PERMANENT_DATA_ERROR', ids, error);
+        const failed = await this.failIfProven(data, ids, context);
+        return failed ?? deadLetter('PERMANENT_DATA_ERROR', ids, error);
       }
       if (error instanceof InboxMessageReusedError) {
         return deadLetter('INBOX_MESSAGE_REUSED', ids, error);
@@ -206,9 +219,22 @@ export class WagerMessageHandler {
       }
     }
 
-    // DependencyUnavailableError e TUDO o que não sabemos classificar: não apaga (apagar um erro
-    // desconhecido é perder a mensagem). O limite de entregas o leva à DLQ, com o motivo.
-    if (this.policy.isExhausted(context.receiveCount)) {
+    // O resto não apaga (apagar um erro desconhecido é perder a mensagem): retry com backoff, e o
+    // limite de entregas o leva à DLQ. Um erro PERMANENTE conhecido (erro de aplicação não
+    // reenviável, ou de domínio: um bug) soma 1 na prova; na última entrega, se TODAS somaram,
+    // vira FAILED. O transitório (banco fora) e o desconhecido nunca somam.
+    const exhausted = this.policy.isExhausted(context.receiveCount);
+    if (isPermanent(error)) {
+      if (exhausted) {
+        const failed = await this.failIfProven(data, ids, context);
+        if (failed) {
+          return failed;
+        }
+      } else {
+        await this.recordPermanentFailure(ids);
+      }
+    }
+    if (exhausted) {
       return deadLetter('RETRIES_EXHAUSTED', ids, error);
     }
     return {
@@ -218,6 +244,63 @@ export class WagerMessageHandler {
       ...ids,
     };
   }
+
+  // Soma esta falha permanente na prova. Se nem isso passa (o banco caiu agora), a entrega fica sem
+  // registro: falta de prova, e o FAILED não acontece. Devolve o total, ou undefined.
+  private async recordPermanentFailure(
+    ids: Identified,
+  ): Promise<number | undefined> {
+    if (!this.failures || !ids.messageId) {
+      return undefined;
+    }
+    try {
+      return await this.failures.recordPermanentFailure(
+        WAGER_CONSUMER_NAME,
+        ids.messageId,
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Registra esta falha e, se TODAS as entregas até agora (receiveCount) foram falhas permanentes
+  // registradas, grava FAILED e devolve o ack. Qualquer outra coisa (sem prova, sem processor.fail,
+  // ou o próprio FAILED não gravou) devolve undefined, e quem chama manda para a DLQ.
+  private async failIfProven(
+    data: Record<string, unknown>,
+    ids: Identified,
+    context: MessageContext,
+  ): Promise<Disposition | undefined> {
+    const recorded = await this.recordPermanentFailure(ids);
+    if (
+      recorded === undefined ||
+      recorded < context.receiveCount ||
+      !this.processor.fail ||
+      !ids.messageId
+    ) {
+      return undefined;
+    }
+    try {
+      const result = await this.processor.fail(data, {
+        idempotencyKey: data.idempotencyKey,
+        correlationId: ids.messageId,
+        inbox: { consumerName: WAGER_CONSUMER_NAME, messageId: ids.messageId },
+      });
+      return acknowledge(result, ids);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+// Erro que reenviar não resolve e que não é de banco fora: erro de aplicação não reenviável (bug,
+// como ConcurrentWalletUpdateError) ou de domínio. Um Error qualquer NÃO conta: pode ser um problema
+// de rede que ninguém classificou, e na dúvida o FAILED não acontece.
+function isPermanent(error: unknown): boolean {
+  if (error instanceof DomainError) {
+    return true;
+  }
+  return error instanceof ApplicationError && !error.retryable;
 }
 
 function deadLetter(

@@ -24,10 +24,13 @@ export enum FailureCode {
   // antes de gravar, em vez de estourar no meio da transação.
   BalanceLimitExceeded = 'BALANCE_LIMIT_EXCEEDED',
   DependencyUnavailable = 'DEPENDENCY_UNAVAILABLE',
+  // Erro PERMANENTE de infraestrutura (enunciado 6.3): a transação fica FAILED, terminal e auditável.
+  // Só é gravado com prova de que nenhuma tentativa foi transitória (ADR-0016).
+  ProcessingFailed = 'PROCESSING_FAILED',
 }
 
 export type FailureCategory =
-  'validation' | 'idempotency' | 'business' | 'transient';
+  'validation' | 'idempotency' | 'business' | 'transient' | 'permanent';
 
 export interface FailureCodeInfo {
   category: FailureCategory;
@@ -70,6 +73,7 @@ const INFO: Record<FailureCode, FailureCodeInfo> = {
     category: 'transient',
     retryable: true,
   },
+  [FailureCode.ProcessingFailed]: { category: 'permanent', retryable: false },
 };
 
 export function failureCodeInfo(code: FailureCode): FailureCodeInfo {

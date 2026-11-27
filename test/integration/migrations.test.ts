@@ -14,6 +14,7 @@ const url = new URL(process.env.DATABASE_URL as string);
 url.pathname = `/${DB_NAME}`;
 
 const TABLES = [
+  'consumer_delivery_failures',
   'inbox_messages',
   'outbox_messages',
   'wager_transactions',

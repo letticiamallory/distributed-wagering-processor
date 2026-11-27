@@ -219,7 +219,7 @@ hash (testado). **O hash é parte do contrato**: mudar campo, ordem ou algoritmo
 
 (ADR-0009; `src/domain/errors/failure-code.ts`)
 
-São **19 códigos** de domínio, em 4 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
+São **20 códigos** de domínio, em 5 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
 outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 
 | Categoria | Código | HTTP | O que significa | O que o provedor faz |
@@ -243,8 +243,9 @@ outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 | negócio | `REFERENCE_SETTLED` | 422 | reverter uma BET que já pagou prêmio deixaria o jogador com os dois | **desistir** (reverta o WIN antes) |
 | negócio | `BALANCE_LIMIT_EXCEEDED` | 422 | o crédito (WIN, REFUND, ROLLBACK de BET) passaria do teto de 16 dígitos inteiros do saldo (`9999999999999999.99`); o mesmo teto vale para o `initialBalance` (ADR-0006) | **desistir**; uma nova operação só depois de o saldo baixar |
 | transitório | `DEPENDENCY_UNAVAILABLE` | **503** + `Retry-After` | banco fora, pool cheio, `lock_timeout`, deadlock | **reenviar a mesma chave** depois do `Retry-After`; nada foi gravado |
+| permanente | `PROCESSING_FAILED` | **500** | erro permanente de infraestrutura: a transação ficou `FAILED`, terminal e auditável, sem saldo nem ledger (só com a prova de que nenhuma tentativa foi transitória, ADR-0016) | **não reenviar a mesma chave** (devolve sempre o mesmo `FAILED`); corrigir a causa e mandar com chave nova |
 
-Além dos 19, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
+Além dos 20, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
 `TRANSACTION_NOT_FOUND` (404), `INTERNAL_ERROR` (500), `UNAUTHENTICATED` (401) e
 `PROVIDER_FORBIDDEN` (403). O mapa é uma tabela **total** sobre todos eles
 (`Record<ApiErrorCode, number>`): um código novo não compila sem um status.
@@ -269,7 +270,7 @@ Além dos 19, a API tem códigos que **não** são de transação: `WALLET_ALREA
 | Conflito de idempotência, ou wallet já existente | **409** | erro |
 | Corpo acima do limite | **413** | erro |
 | Falha transitória de infraestrutura | **503** + `Retry-After` | erro, `retryable: true` |
-| Erro inesperado (bug); também seria o replay de uma transação `FAILED`, mas hoje nenhum caminho do código grava `FAILED` | **500** | erro |
+| Erro inesperado (bug), e o replay de uma transação `FAILED` (ADR-0016) | **500** | erro |
 | Sem credencial, ou provedor sem direito sobre o `providerId` | 401 / 403 | erro (ADR-0010) |
 
 - **Formato único de erro** em todas as rotas: `{ "error": { "code", "message", "retryable",
@@ -305,6 +306,7 @@ disputa pelo lock); a garantia de correção é do banco.
 | erro que não sabemos classificar (bug) | tratado como transitório; o limite o leva à DLQ |
 | JSON, envelope ou payload inválido (inclusive texto com caractere de controle ou Unicode inválido); `WALLET_NOT_FOUND`; mesmo `messageId` com outro conteúdo; erro `critical` | **DLQ** (o `critical` também loga `fatal`, uma vez) |
 | o banco recusou o **dado** (SQLSTATE classe `22`, ou `08P01`): `PERMANENT_DATA_ERROR` | **DLQ** já: reenviar dá o mesmo erro, e o retry seguraria a wallet por minutos |
+| erro permanente (bug, ou `PermanentDataError`) em **todas** as entregas, com a prova em `consumer_delivery_failures` | grava `FAILED` com `PROCESSING_FAILED` e ack (ADR-0016); sem a prova completa (alguma entrega foi transitória, ou ficou sem registro), DLQ: **uma queda longa do banco nunca vira `FAILED`** |
 | transitório na última entrega permitida | **DLQ** (`RETRIES_EXHAUSTED`) |
 
 - **Por que conflito de idempotência é *ack* e `WALLET_NOT_FOUND` é DLQ:** o conflito é terminal e
@@ -491,7 +493,6 @@ mesma validação do comando.
 | **Outbox**: índice `(occurred_at) WHERE published_at IS NULL` não existe | só vale criar se o backlog crescer; hoje não foi medido como necessário | ADR-0012 |
 | **Moedas** | todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
 | **`check:money` é uma heurística de linha** | pega o descuido comum (`parseFloat(amount)`); não prova que não existe `number` em lugar nenhum | ADR-0006 |
-| **Status `FAILED`** | existe no domínio e no schema (terminal, travado pelo trigger), mas nenhum caminho do código grava `FAILED`: um erro permanente de infraestrutura hoje vira 500 no HTTP (sem linha gravada) ou vai para a DLQ na fila. O enunciado o define como terminal e auditável; quando gravá-lo é uma proposta em aberto | ADR-0004, ADR-0009 |
 | **Autenticação** | não implementada (desenho na seção 9) | ADR-0010 |
 | **SIGTERM real no Windows** | o Node não executa handlers de sinal no Windows; o teste real roda em Linux (no CI e em container) e no Windows prova só a ligação do encerramento | ADR-0011 |
 | **Ambiente de teste** | o banco de teste usa `synchronous_commit = off` (só por velocidade, **nunca** em produção); o compose do repositório não é um deploy de produção | README |
@@ -518,3 +519,4 @@ mesma validação do comando.
 | [0013](docs/adr/0013-pending-reference-worker-and-retry-policy.md) | Worker de `PENDING_REFERENCE` e a política de retentativa |
 | [0014](docs/adr/0014-observability-json-logs-prometheus-metrics-and-health.md) | Observabilidade: logs JSON, métricas Prometheus e health checks |
 | [0015](docs/adr/0015-queries-cursor-pagination-and-read-only-reconciliation.md) | Consultas, paginação por cursor e reconciliação somente leitura |
+| [0016](docs/adr/0016-failed-status-only-with-proof.md) | `FAILED` só com prova de que nenhuma tentativa foi transitória |

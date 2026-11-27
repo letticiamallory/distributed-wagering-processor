@@ -23,8 +23,7 @@ resposta, nunca corrigida em silêncio**.
   é UUID é 400, nunca um erro 22P02 do banco virando 500. **400 vem antes de 404**: um parâmetro
   malformado não se esconde atrás de "não existe".
 - Uma transação gravada é um recurso que existe em **qualquer status**: `REJECTED`,
-  `PENDING_REFERENCE` e `FAILED` (este último só em tese: hoje nenhum caminho do código grava `FAILED`)
-  são **200** com o status no corpo (o 422 e o 202 são respostas da
+  `PENDING_REFERENCE` e `FAILED` (ADR-0016) são **200** com o status no corpo (o 422 e o 202 são respostas da
   *submissão*, não do recurso). O corpo omite o que é interno (chave de idempotência, hash,
   `correlationId`, jogador).
 - O `ProviderAuthGuard` agora também confere o **`:providerId` da rota** (403 se o token não pode

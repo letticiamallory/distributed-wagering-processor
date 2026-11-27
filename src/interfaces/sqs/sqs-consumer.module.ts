@@ -7,6 +7,7 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { MetricsPort } from '../../application/ports/metrics.port.js';
+import { DeliveryFailureLog } from '../../application/ports/delivery-failure-log.js';
 import { ConsumerRetryPolicy } from '../../application/messaging/consumer-retry-policy.js';
 import { WagerMessageHandler } from '../../application/messaging/wager-message-handler.js';
 import { ProcessWagerTransactionUseCase } from '../../application/use-cases/process-wager-transaction.use-case.js';
@@ -51,6 +52,7 @@ export { resolveQueueUrls };
         gateway: QueueGateway | undefined,
         useCase: ProcessWagerTransactionUseCase,
         metrics: MetricsPort,
+        failures: DeliveryFailureLog,
       ) =>
         gateway
           ? new WagerSqsConsumer(
@@ -62,6 +64,7 @@ export { resolveQueueUrls };
                   baseSeconds: config.retryBaseSeconds,
                   maxSeconds: config.retryMaxSeconds,
                 }),
+                failures,
               ),
               {
                 waitSeconds: config.waitSeconds,
@@ -76,6 +79,7 @@ export { resolveQueueUrls };
         QueueGateway,
         ProcessWagerTransactionUseCase,
         MetricsPort,
+        DeliveryFailureLog,
       ],
     },
   ],

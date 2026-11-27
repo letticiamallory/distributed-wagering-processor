@@ -1,13 +1,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 
-// O status FAILED existe no domínio (WagerTransaction.fail) e no schema, mas NENHUM caminho do
-// código o grava hoje (a proposta de quando gravá-lo está em aberto). A documentação descrevia o
-// tratamento do replay de FAILED (500, ack) como se acontecesse. Todo documento que fala de FAILED
-// tem que dizer que ele não é gravado, e o código tem que continuar sem gravá-lo: se um dia gravar,
-// este teste falha e obriga a atualizar a documentação junto.
-const NOTICE = 'nenhum caminho do código grava `FAILED`';
-
+// O FAILED (enunciado 6.3) é gravado em dois gatilhos, decididos no ADR-0016. A documentação não
+// pode voltar a descrever o FAILED como "preparado, não usado", e todo documento que fala dele
+// aponta para o ADR que diz quando ele é gravado. Do lado do código, só o caso de uso de
+// processamento chama WagerTransaction.fail(): um caminho novo que grave FAILED tem que passar por
+// ele (e pela regra da prova).
 const docs = [
   'README.md',
   'ARCHITECTURE.md',
@@ -16,22 +14,44 @@ const docs = [
     .map((name) => `docs/adr/${name}`),
 ];
 
-describe('documents that mention FAILED say it is not recorded today', () => {
+describe('documents that mention FAILED point to ADR-0016 and no longer call it unused', () => {
   for (const file of docs) {
     const text = readFileSync(file, 'utf8');
-    if (!/\bFAILED\b/.test(text)) continue;
+    // O próprio ADR-0016 e o índice dos ADRs (que só lista o título dele) ficam de fora.
+    if (
+      !/\bFAILED\b/.test(text) ||
+      file.includes('0016-') ||
+      file === 'docs/adr/README.md'
+    )
+      continue;
     test(file, () => {
-      expect(text.includes(NOTICE)).toBe(true);
+      expect(text.includes('ADR-0016')).toBe(true);
+      expect(text.includes('nenhum caminho do código grava `FAILED`')).toBe(
+        false,
+      );
     });
   }
+
+  test('ADR-0016 exists and names both triggers and the outage rule', () => {
+    const adr = readdirSync('docs/adr').find((name) =>
+      name.startsWith('0016-'),
+    );
+    expect(adr).toBeDefined();
+    const text = readFileSync(`docs/adr/${adr}`, 'utf8');
+    expect(text).toContain('PROCESSING_FAILED');
+    expect(text).toContain('consumer_delivery_failures');
+    expect(text).toContain('PermanentDataError');
+    expect(/queda longa do banco/i.test(text)).toBe(true);
+  });
 });
 
-describe('the code really never records FAILED', () => {
-  test('WagerTransaction.fail() has no caller in src/', () => {
-    const files = new Bun.Glob('src/**/*.ts').scanSync();
-    const callers = [...files].filter((file) =>
-      /\.fail\(/.test(readFileSync(file, 'utf8')),
+describe('only the processing use case records FAILED', () => {
+  test('WagerTransaction.fail() is called in one place in src/', () => {
+    const callers = [...new Bun.Glob('src/**/*.ts').scanSync()].filter((file) =>
+      /\.fail\(FailureCode\./.test(readFileSync(file, 'utf8')),
     );
-    expect(callers).toEqual([]);
+    expect(callers.map((f) => f.replaceAll('\\', '/'))).toEqual([
+      'src/application/use-cases/process-wager-transaction.use-case.ts',
+    ]);
   });
 });

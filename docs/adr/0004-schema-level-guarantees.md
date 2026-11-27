@@ -22,9 +22,8 @@ Toda constraint tem nome (`ck_`, `uq_`, `fk_`, `pk_`), para o erro dizer qual re
   REJECTED | FAILED; PENDING_REFERENCE → PENDING_REFERENCE | PROCESSED | REJECTED | FAILED;
   dos três finais, nenhuma. A ordem dentro da função importa: o estado final é recusado
   primeiro (`is terminal`), depois a volta a PENDING (`cannot be updated to PENDING`).
-  **Hoje nenhum caminho do código grava `FAILED`** (`WagerTransaction.fail()` existe, mas não
-  tem chamador): o schema aceita o estado e o trava como final, para quando ele for usado. Quando
-  e como gravá-lo é uma proposta em aberto.
+  `FAILED` é gravado só com a prova de que nenhuma tentativa foi transitória (ADR-0016), num
+  INSERT já final; o trigger o trava como os outros estados finais.
 - **wallet_ledger_entries:** append-only (trigger por linha e trigger por comando para o TRUNCATE);
   aritmética `balance_before ± amount = balance_after`; `amount > 0`;
   FK `(wallet_id, currency)`; `UNIQUE (wallet_id, wallet_version)`.
