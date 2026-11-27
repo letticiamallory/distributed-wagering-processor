@@ -253,7 +253,7 @@ Além dos 19, a API tem códigos que **não** são de transação: `WALLET_ALREA
 | Conflito de idempotência, ou wallet já existente | **409** | erro |
 | Corpo acima do limite | **413** | erro |
 | Falha transitória de infraestrutura | **503** + `Retry-After` | erro, `retryable: true` |
-| Erro inesperado (bug), inclusive o replay de uma transação `FAILED` | **500** | erro |
+| Erro inesperado (bug); também seria o replay de uma transação `FAILED`, mas hoje nenhum caminho do código grava `FAILED` | **500** | erro |
 | Sem credencial, ou provedor sem direito sobre o `providerId` | 401 / 403 | erro (ADR-0010) |
 
 - **Formato único de erro** em todas as rotas: `{ "error": { "code", "message", "retryable",
@@ -467,6 +467,7 @@ mesma validação do comando.
 | **Outbox**: índice `(occurred_at) WHERE published_at IS NULL` não existe | só vale criar se o backlog crescer; hoje não foi medido como necessário | ADR-0012 |
 | **Moedas** | todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
 | **`check:money` é uma heurística de linha** | pega o descuido comum (`parseFloat(amount)`); não prova que não existe `number` em lugar nenhum | ADR-0006 |
+| **Status `FAILED`** | existe no domínio e no schema (terminal, travado pelo trigger), mas nenhum caminho do código grava `FAILED`: um erro permanente de infraestrutura hoje vira 500 no HTTP (sem linha gravada) ou vai para a DLQ na fila. O enunciado o define como terminal e auditável; quando gravá-lo é uma proposta em aberto | ADR-0004, ADR-0009 |
 | **Autenticação** | não implementada (desenho na seção 9) | ADR-0010 |
 | **SIGTERM real no Windows** | o Node não executa handlers de sinal no Windows; o teste real roda em Linux (no CI e em container) e no Windows prova só a ligação do encerramento | ADR-0011 |
 | **Ambiente de teste** | o banco de teste usa `synchronous_commit = off` (só por velocidade, **nunca** em produção); o compose do repositório não é um deploy de produção | README |

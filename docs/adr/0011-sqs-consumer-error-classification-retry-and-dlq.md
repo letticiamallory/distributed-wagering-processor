@@ -32,7 +32,7 @@ entregues. Usamos `MessageGroupId = walletId`.
 | --- | --- | --- |
 | `PROCESSED`, `REJECTED`, `PENDING_REFERENCE`, replay, inbox já vista | negócio (concluído) | **ack** |
 | `IDEMPOTENCY_KEY_REUSED`, `EXTERNAL_ID_CONFLICT` | negócio (terminal, determinístico) | **ack**, com log `warn` com `messageId` e `idempotencyKey` |
-| transação `FAILED` já registrada | negócio (registrado) | ack, log `error` |
+| transação `FAILED` já registrada (preparado: hoje nenhum caminho do código grava `FAILED`) | negócio (registrado) | ack, log `error` |
 | `DEPENDENCY_UNAVAILABLE` (banco fora, `lock_timeout`, deadlock, pool) | transitório | **não apaga**; `ChangeMessageVisibility` com backoff |
 | erro que não sabemos classificar (bug) | desconhecido | tratado como transitório: não apaga; o limite o leva à DLQ |
 | JSON inválido, envelope inválido, payload inválido (`INVALID_PAYLOAD`, `INVALID_AMOUNT`, `UNSUPPORTED_KIND`) | permanente | **DLQ** |
