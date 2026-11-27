@@ -82,6 +82,15 @@ describe('the process dies between the commit and the publication', () => {
     try {
       await b.waitReady();
       await events.collect(2);
+      // O publisher envia ao SQS com a transação aberta e SÓ DEPOIS marca published_at e faz o
+      // COMMIT (ADR-0012). As mensagens chegam na fila antes desse commit: matar B logo depois do
+      // collect podia cair entre o envio e o commit, e as linhas ficavam sem published_at (a falha
+      // intermitente, mais provável sob carga). Espera o commit antes de matar.
+      await waitFor('the second instance to commit published_at', async () =>
+        (await outboxRowsOf(s.sql, [wallet.id])).every(
+          (r) => r.published_at !== null,
+        ),
+      );
     } finally {
       await b.kill();
     }
