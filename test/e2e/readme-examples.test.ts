@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { spawnApp, type AppProcess } from '../support/app-process.js';
+import { ensureTestDatabase } from '../support/database.js';
 import { createTestQueues, type TestQueues } from '../support/queues.js';
 
 // O README não pode mentir: este teste extrai o bloco ```bash readme-example e o EXECUTA de
@@ -31,6 +32,9 @@ beforeAll(async () => {
   if (EXTERNAL_BASE) {
     return;
   }
+  // O schema do banco de testes, garantido AQUI: rodado sozinho, com o banco recém-criado, este
+  // teste não pode depender de outro arquivo ter aplicado as migrations antes dele.
+  await ensureTestDatabase();
   queues = await createTestQueues();
   app = spawnApp({
     SQS_CONSUMER_ENABLED: 'true',
