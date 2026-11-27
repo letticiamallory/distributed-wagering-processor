@@ -31,7 +31,9 @@ pequeno.
     `debug`.
   - **Consumidor SQS:** `message_acked`, `message_retry`, `message_dead_lettered`, com `messageId`,
     `correlationId` (= `messageId`; sem envelope válido, o id do SQS), `walletId`, `providerId`,
-    `idempotencyKey` e `transactionId`.
+    `idempotencyKey` e `transactionId`. O `message_acked` de sucesso (PROCESSED, REJECTED,
+    PENDING_REFERENCE, replay) sai em `info`, para o `LOG_LEVEL` padrão ligar o `messageId` ao
+    `transactionId`; o conflito de idempotência sai em `warn`.
   - **Workers:** `pending_reference_resolved` (`transactionId`, `walletId`), `outbox_batch_published`
     (quantos), `outbox_event_retry` e `outbox_event_stuck` (`eventId`, `walletId`, tentativas).
 - **O que nunca entra numa linha** (cinco camadas, porque uma só falha em silêncio):
