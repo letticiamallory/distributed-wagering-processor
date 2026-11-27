@@ -678,6 +678,28 @@ passa pela mesma validação do comando.
 | **Autenticação** | não implementada (desenho na seção 5.10) | ADR-0010 |
 | **`SIGTERM` real no Windows** | o teste real roda em Linux (CI e container); no Windows prova só a ligação | ADR-0011 |
 | **Ambiente de teste** | o banco de teste usa `synchronous_commit = off` (só por velocidade, nunca em produção); o compose não é um deploy de produção | README |
+| **Tabelas técnicas sem retenção** | `inbox_messages`, `outbox_messages` (as já publicadas) e `consumer_delivery_failures` só crescem; nenhuma limpeza roda hoje (abaixo) | ADR-0011, ADR-0012, ADR-0016 |
+
+**Retenção das tabelas técnicas (não implementada).** O ledger e as transações crescem de
+propósito: são o registro auditável. As três tabelas abaixo são técnicas, e cada linha só serve por
+um tempo limitado. Nada as limpa hoje; com volume real, elas precisam de uma limpeza periódica.
+
+| Tabela | Para que a linha serve | Até quando serve | Por que apagar depois é seguro |
+| --- | --- | --- | --- |
+| `inbox_messages` | reconhecer uma reentrega do mesmo `messageId` e pegar o mesmo `messageId` com outro payload | enquanto a mensagem pode ser entregue de novo: no máximo o `MessageRetentionPeriod` da fila (14 dias em `scripts/init-queues.sh`) | depois disso a mensagem não existe mais na fila; e mesmo uma reentrega tardia não duplica nada, porque a chave de idempotência em `wager_transactions` responde com replay |
+| `outbox_messages` publicadas (`published_at` preenchido) | histórico do envio | até alguém precisar investigar um envio | o evento já está na fila, o consumidor deduplica pelo `eventId`, e o fato de negócio está no ledger. As **não publicadas nunca são apagadas** |
+| `consumer_delivery_failures` | contar as falhas permanentes de uma entrega, para provar o `FAILED` (ADR-0016) | o mesmo prazo da inbox | sem a mensagem na fila não há mais entrega para decidir; um `FAILED` já gravado fica em `wager_transactions` |
+
+**Como se limparia:** um job periódico (o mesmo padrão dos workers, com `FOR UPDATE SKIP LOCKED` para
+rodar em várias réplicas), que apaga **em lotes** pequenos (por exemplo, 1.000 linhas por instrução),
+para não segurar locks nem gerar um pico de WAL. Por exemplo,
+`DELETE FROM inbox_messages WHERE ctid IN (SELECT ctid FROM inbox_messages WHERE received_at < now() - interval '15 days' LIMIT 1000)`.
+O mesmo vale para `consumer_delivery_failures` por `last_failed_at` e para `outbox_messages` por
+`published_at` (com `published_at IS NOT NULL`). O prazo da inbox e das falhas tem que ser maior que
+o `MessageRetentionPeriod` da fila, com folga; o da outbox é decisão de operação (30 dias seria
+razoável). Antes, um índice em `received_at`, `last_failed_at` e `published_at`, para a busca não
+varrer a tabela inteira. Alternativa com volume alto: particionar por mês e descartar a partição
+inteira.
 
 **Trabalho futuro, não aplicado:**
 
