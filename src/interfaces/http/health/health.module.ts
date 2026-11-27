@@ -2,6 +2,7 @@ import { SQSClient } from '@aws-sdk/client-sqs';
 import { Module, type OnModuleDestroy, Inject } from '@nestjs/common';
 import { PostgresProbe } from '../../../infrastructure/health/postgres-probe.js';
 import { SqsProbe } from '../../../infrastructure/health/sqs-probe.js';
+import { requiredQueueNames } from './required-queues.js';
 import { HttpConfig, loadHttpConfig } from '../http-config.js';
 import { HealthController } from './health.controller.js';
 import { HealthService, READINESS_PROBES } from './health.service.js';
@@ -23,7 +24,7 @@ const HEALTH_SQS = Symbol('HEALTH_SQS');
       provide: READINESS_PROBES,
       useFactory: (postgres: PostgresProbe, sqs: SQSClient) => [
         postgres,
-        new SqsProbe(sqs),
+        new SqsProbe(sqs, requiredQueueNames()),
       ],
       inject: [PostgresProbe, HEALTH_SQS],
     },

@@ -46,7 +46,11 @@ describe('the process DIES between the commit and the ack', () => {
       const errors = new Response(child.stderr as ReadableStream).text();
       const code = await child.exited;
 
-      expect(code, await errors).toBe(137); // morreu mesmo (kill -9), não saiu limpo
+      // Morreu mesmo (kill -9), não saiu limpo. No POSIX o sinal é visível; no Windows só o código.
+      expect(code, await errors).not.toBe(0);
+      if (process.platform !== 'win32') {
+        expect(child.signalCode).toBe('SIGKILL');
+      }
       expect(await output).toContain('ABOUT_TO_ACK');
 
       // O commit aconteceu e ficou: a transação, o débito e a inbox existem.

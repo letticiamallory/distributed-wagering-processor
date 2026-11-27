@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReservedProviderId } from '../../domain/wager/wager-transaction.js';
 import type { WagerTransaction } from '../../domain/wager/wager-transaction.js';
 import type { WalletLedgerEntry } from '../../domain/wallet/wallet-ledger-entry.js';
 import { invalidPayload } from '../commands/command-parsing.js';
@@ -100,6 +101,7 @@ export class ListLedgerUseCase {
         ? undefined
         : decodeLedgerCursor(
             typeof input.cursor === 'string' ? input.cursor : '',
+            walletId,
           );
 
     if (!(await this.wallets.findById(walletId))) {
@@ -115,7 +117,9 @@ export class ListLedgerUseCase {
     return {
       items,
       nextCursor:
-        hasNext && last ? encodeLedgerCursor(last.walletVersion) : null,
+        hasNext && last
+          ? encodeLedgerCursor(walletId, last.walletVersion)
+          : null,
     };
   }
 }
@@ -165,10 +169,10 @@ export class GetTransactionUseCase {
       externalTransactionId,
       'externalTransactionId',
     );
-    const found = await this.transactions.findByProviderAndExternalId(
-      provider,
-      external,
-    );
+    // As transações do sistema (a OPENING) não são de provedor nenhum: a rota não as expõe.
+    const found = isReservedProviderId(provider)
+      ? undefined
+      : await this.transactions.findByProviderAndExternalId(provider, external);
     if (!found) {
       throw new TransactionNotFoundError(`${provider}/${external}`);
     }

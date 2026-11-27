@@ -14,6 +14,7 @@ import {
   FakeProviderIdentityPort,
   RejectEverythingPort,
 } from '../support/provider-identity.js';
+import { tamperSql } from '../support/tamper.js';
 
 let app: TestApp;
 let secured: TestApp;
@@ -235,9 +236,10 @@ describe('POST /wallets/:walletId/reconciliation', () => {
 
   test('a divergence: consistent false in the response, an ERROR log with the wallet and the kinds (no amounts), and the metric goes up; nothing is corrected', async () => {
     const { wallet } = await walletWithBets(2);
-    await app.sql('UPDATE wallets SET balance = balance + 7.77 WHERE id = ?', [
-      wallet.id,
-    ]);
+    await tamperSql(app.db.orm.em)(
+      'UPDATE wallets SET balance = balance + 7.77 WHERE id = ?',
+      [wallet.id],
+    );
     app.logs.clear();
     const before = parseMetrics((await app.get('/metrics')).text);
 

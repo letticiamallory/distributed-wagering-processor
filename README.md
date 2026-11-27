@@ -29,6 +29,15 @@ testes `wallet_test`), o MiniStack, o `queues-init` (cria `wager-transactions.fi
 aplicação em `http://localhost:3000`, que já roda o consumidor SQS, o publisher da outbox e o worker
 de referências pendentes.
 
+Na primeira subida (volume vazio) o PostgreSQL leva perto de 1 minuto para inicializar; o
+healthcheck espera até 170 s, então o `--wait` pode demorar sem que nada esteja errado.
+
+> **O MiniStack guarda as filas só em memória (não persiste nada).** Se o container `sqs` reiniciar,
+> as filas e as mensagens que estavam nelas somem, e o consumidor passa a logar
+> `queue_receive_failed`. Para recriá-las, rode de novo `docker compose up -d --wait`: ele executa
+> outra vez o `queues-init` (que é idempotente). Os eventos da outbox não se perdem: ficam no banco e
+> são publicados quando a fila volta.
+
 ```bash
 bun install --frozen-lockfile
 bun run test                # suíte principal
@@ -211,11 +220,13 @@ em [.env.example](.env.example). Os padrões abaixo são conferidos por um teste
 | `SQS_ENDPOINT` | (sem padrão) | | Endpoint do SQS (MiniStack no compose). `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_REGION` seguem o SDK da AWS (no compose: `test`, `test`, `us-east-1`). |
 | `DB_POOL_MIN` | `2` | inteiro ≥ 0 | Conexões mínimas do pool. |
 | `DB_POOL_MAX` | `20` | inteiro ≥ 0 | Conexões máximas **por processo**. Com o pool cheio, o pedido espera até `DB_ACQUIRE_TIMEOUT_MS` e vira 503. |
-| `DB_ACQUIRE_TIMEOUT_MS` | `1000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. |
+| `DB_ACQUIRE_TIMEOUT_MS` | `3000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. O padrão de 3 s foi medido (ARCHITECTURE.md, seção 2): com 1 s, a rajada da tabela dá 503 em mais da metade das requisições. |
 | `DB_LOCK_TIMEOUT_MS` | `5000` | 1 a 600000 | Quanto esperar pelo lock de uma wallet antes de responder 503. |
 | `RETRY_AFTER_SECONDS` | `1` | 1 a 3600 | O `Retry-After` do 503. |
+| `HTTP_SHUTDOWN_DRAIN_MS` | `5000` | 0 a 60000 | No SIGTERM, por quanto tempo o HTTP continua atendendo com o `/health/ready` já em 503, para o balanceador parar de mandar tráfego. |
+| `HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | 0 a 120000 | Depois da drenagem, quanto esperar as requisições em andamento antes de cortar as conexões. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `fatal` | Nível mínimo dos logs JSON. |
-| `PENDING_REFERENCE_MAX_ATTEMPTS` | `10` | inteiro ≥ 1 | Tentativas totais (a 1ª gravação conta) até rejeitar uma referência que não chega. |
+| `PENDING_REFERENCE_MAX_ATTEMPTS` | `10` | inteiro ≥ 1 | Tentativas totais (a 1ª gravação conta) até rejeitar uma referência que não chega. O campo `attempts` da transação conta só as tentativas que **não** acharam a referência; a que decide não entra, então uma rejeição com o limite 10 mostra `attempts: 9`. |
 | `PENDING_REFERENCE_BASE_DELAY_MS` | `1000` | inteiro ≥ 1 | Base do backoff da espera pela referência. |
 | `PENDING_REFERENCE_MAX_DELAY_MS` | `300000` | inteiro ≥ base | Teto da espera entre tentativas. |
 | `SQS_CONSUMER_ENABLED` | `true` | `true` ou `false` | Liga o consumidor SQS neste processo. |
@@ -294,9 +305,23 @@ nem AWS SDK, e dinheiro nunca passa por `number`.
 
 ## Comandos úteis
 
+Os comandos que rodam **no host** (migrations, a app fora do compose) leem `DATABASE_URL` e
+`SQS_ENDPOINT` do ambiente. O compose não precisa disso, mas num clone limpo `bun run migration:up`
+falha com `DATABASE_URL is required` até você criar o `.env` (o Bun o lê sozinho; os valores do
+modelo apontam para a stack do compose em `localhost`):
+
 ```bash
-bun run typecheck && bun run lint && bun run format:check && bun run check:money && bun run build
+cp .env.example .env               # bash
+Copy-Item .env.example .env        # PowerShell
+```
+
+```bash
+bun run check               # typecheck, lint, format:check e check:money, em sequência (para no 1º erro)
+bun run build
 bun run migration:up        # aplica as migrations do lado do host (no compose, o serviço `migrate` faz isso)
 docker compose logs -f app  # logs JSON da aplicação
 docker compose down -v      # derruba tudo e apaga os volumes
 ```
+
+Cada linha é um comando só (nada encadeado com `&&`), então funciona igual no bash e no Windows
+PowerShell 5.1.

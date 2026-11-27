@@ -46,6 +46,13 @@ O que os testes provaram, além do esperado:
   maior que 16 não passaria mais pela regex ao ser lido de volta. Então o teto vale também
   nas operações: somar além dele lança `MoneyOverflowError`, e os resultados negativos têm o
   mesmo limite (testado em `9999999999999999.99 + 0.01` e na subtração equivalente).
+  No fluxo de negócio o `MoneyOverflowError` nunca chega a acontecer: antes de creditar, a política
+  pergunta `wallet.canCredit(money)` e, se o crédito passaria do teto, rejeita a transação com
+  `BALANCE_LIMIT_EXCEEDED` (422, `REJECTED`, gravada e com o evento `WagerTransactionRejected`), o
+  espelho do `INSUFFICIENT_FUNDS`. **O `initialBalance` tem o mesmo teto**, e nenhum a mais: uma
+  wallet pode nascer em `9999999999999999.99`, e a partir daí as apostas funcionam e os créditos
+  são rejeitados de forma auditável. Uma folga extra na criação não resolveria nada (a wallet
+  chegaria ao teto por créditos do mesmo jeito) e seria uma segunda regra para explicar.
 
 Duas verificações automáticas mantêm isso de pé (`bun run check:money`, também coberta pelos
 testes): conversão numérica (`parseFloat`, `parseInt`, `Number`, `.toFixed`) em linha que fala
@@ -74,3 +81,11 @@ fora dessa pasta também. O mesmo script falha se `src/domain` importar `@nestjs
   (construtor privado, instância congelada) cobrem o resto.
 − Multi-moeda com escalas diferentes (JPY sem centavos) não é suportado: todas as moedas
   usam 2 casas. Aceitável porque o desafio assume BRL, mas é um limite conhecido.
+
+## Adendo: a moeda é da ISO-4217
+A moeda não é só "3 letras maiúsculas": tem que estar na lista ISO-4217 vigente, fixa no domínio
+(`src/domain/money/iso-4217.ts`). O `Money` recusa o resto (`InvalidMoneyError`), e a entrada da
+API e da fila responde 400 `INVALID_PAYLOAD`, na wallet e na transação. Um teste compara a lista
+com `Intl.supportedValuesOf('currency')`: toda moeda nossa existe lá (pega erro de digitação), e
+as históricas que o Intl ainda conhece (DEM, FRF, HRK, ANG...) não estão na nossa. Uma moeda
+válida que não é a da wallet continua sendo `422 CURRENCY_MISMATCH`.

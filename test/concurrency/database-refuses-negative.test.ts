@@ -3,6 +3,7 @@ import { usePersistence } from '../support/persistence.js';
 import { failIfAny, recordMetrics } from '../support/ledger-check.js';
 import { createScenario } from '../support/wager-scenarios.js';
 import { rounds } from '../support/rounds.js';
+import { tamperSql } from '../support/tamper.js';
 
 // A terceira barreira (ADR-0007): MESMO que um bug tire o lock e a versão, o BANCO recusa o saldo
 // negativo. Aqui não há aplicação no meio: dois UPDATEs em SQL puro, ao mesmo tempo, na mesma
@@ -13,6 +14,11 @@ import { rounds } from '../support/rounds.js';
 // desta suíte o exercita. Sem ele, o CHECK poderia sumir sem que ninguém notasse.
 const db = usePersistence();
 const s = createScenario(db);
+// Saldo mexido por fora da aplicação, de propósito: com os triggers desligados (sem eles, o
+// trg_wallet_balance_has_ledger recusaria no COMMIT antes de o CHECK ser testado). O CHECK de
+// saldo negativo, que é o que se prova aqui, continua valendo.
+const tamper = (query: string, params: unknown[] = []) =>
+  tamperSql(db().orm.em)(query, params);
 const ROUNDS = rounds(50);
 
 describe('the database refuses a negative balance on its own, under concurrency', () => {
@@ -23,13 +29,13 @@ describe('the database refuses a negative balance on its own, under concurrency'
       // Uma wallet de FIXTURE (sem ledger, datada de 2000): este teste mexe no saldo por fora da
       // aplicação de propósito, então ela fica de fora do check global das wallets da suíte.
       const wallet = { id: crypto.randomUUID() };
-      await s.sql(
+      await tamper(
         `INSERT INTO wallets (id, player_id, currency, balance, version, created_at, updated_at)
          VALUES (?, ?, 'BRL', '100.00', 1, '2000-01-01', '2000-01-01')`,
         [wallet.id, crypto.randomUUID()],
       );
       const debit = () =>
-        s.sql(
+        tamper(
           'UPDATE wallets SET balance = balance - 80.00 WHERE id = ? RETURNING balance::text AS balance',
           [wallet.id],
         );

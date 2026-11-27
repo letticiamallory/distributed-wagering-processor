@@ -16,13 +16,21 @@ describe('FailureCode taxonomy', () => {
     }
   });
 
-  test('has the 18 codes of the taxonomy, including REFERENCE_SETTLED', () => {
-    expect(allCodes).toHaveLength(18);
+  test('has the 20 codes of the taxonomy, including REFERENCE_SETTLED, BALANCE_LIMIT_EXCEEDED and PROCESSING_FAILED', () => {
+    expect(allCodes).toHaveLength(20);
+    expect(allCodes).toContain(FailureCode.ProcessingFailed);
+    expect(allCodes).toContain(FailureCode.BalanceLimitExceeded);
     expect(allCodes).toContain(FailureCode.ReferenceSettled);
   });
 
   test('every code has a category and a retryable flag', () => {
-    const categories = ['validation', 'idempotency', 'business', 'transient'];
+    const categories = [
+      'validation',
+      'idempotency',
+      'business',
+      'transient',
+      'permanent',
+    ];
     for (const code of allCodes) {
       const info = failureCodeInfo(code);
       expect(categories).toContain(info.category);

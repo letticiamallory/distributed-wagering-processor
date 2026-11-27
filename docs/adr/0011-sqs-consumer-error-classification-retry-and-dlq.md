@@ -33,6 +33,7 @@ entregues. Usamos `MessageGroupId = walletId`.
 | `PROCESSED`, `REJECTED`, `PENDING_REFERENCE`, replay, inbox já vista | negócio (concluído) | **ack** |
 | `IDEMPOTENCY_KEY_REUSED`, `EXTERNAL_ID_CONFLICT` | negócio (terminal, determinístico) | **ack**, com log `warn` com `messageId` e `idempotencyKey` |
 | transação `FAILED` já registrada | negócio (registrado) | ack, log `error` |
+| erro permanente (bug, ou `PermanentDataError`) em **todas** as entregas, com a prova em `consumer_delivery_failures` | permanente | grava `FAILED` (ADR-0016) e ack; sem a prova completa, DLQ |
 | `DEPENDENCY_UNAVAILABLE` (banco fora, `lock_timeout`, deadlock, pool) | transitório | **não apaga**; `ChangeMessageVisibility` com backoff |
 | erro que não sabemos classificar (bug) | desconhecido | tratado como transitório: não apaga; o limite o leva à DLQ |
 | JSON inválido, envelope inválido, payload inválido (`INVALID_PAYLOAD`, `INVALID_AMOUNT`, `UNSUPPORTED_KIND`) | permanente | **DLQ** |
@@ -45,8 +46,8 @@ Por que o conflito de idempotência leva **ack** e `WALLET_NOT_FOUND` leva **DLQ
 resultado terminal e determinístico (reprocessar dá o mesmo conflito, e a operação original já
 vale); apagar não perde nada, e o `warn` deixa rastro. Já `WALLET_NOT_FOUND` **não gravou nada**:
 a operação não terminou, e um operador pode reinjetar a mensagem depois de criar a wallet. Ack
-aqui perderia dinheiro de verdade. (O manual mandava os conflitos para a DLQ; o enunciado os chama
-de erros de negócio, terminais, com ack, e é ele quem manda.)
+aqui perderia dinheiro de verdade. (Mandar os conflitos para a DLQ foi considerado; o enunciado os chama de
+erros de negócio, terminais, com ack, e é ele quem manda.)
 
 ### 3. Como o permanente chega à DLQ: envio explícito
 O consumidor faz `SendMessage` na DLQ (corpo intacto, mesmo `MessageGroupId`, atributos `reason`,
@@ -95,10 +96,16 @@ wallet em grupos diferentes e vários consumidores (há um teste assim). Nenhuma
 pode assumir a ordem da fila.
 
 ### 7. SIGTERM
-`enableShutdownHooks()` no `bootstrap` liga o sinal ao `app.close()`. O consumidor então:
+O `bootstrap` instala o encerramento em ordem (`gracefulShutdown`): o `/health/ready` vira 503, o
+HTTP **drena** por `HTTP_SHUTDOWN_DRAIN_MS` (padrão 5 s) com o banco aberto, o consumidor e os
+workers param **com o HTTP ainda no ar** (o `/health/live` segue 200 enquanto a mensagem em andamento
+termina), o servidor para de aceitar e termina as requisições em andamento, e só então o
+`app.close()` fecha o banco. (O `enableShutdownHooks`
+do Nest fazia o `app.close()` primeiro: a persistência fechava antes do HTTP, e quem chegava no
+encerramento levava 503 ou conexão cortada.) O consumidor então:
 1. **para de buscar** (e aborta o long polling parado);
 2. **espera** as mensagens em andamento, até `SQS_SHUTDOWN_TIMEOUT_MS` (padrão 20 s, abaixo dos
-   30 s do `stop_grace_period` do compose);
+   45 s do `stop_grace_period` do compose, que inclui a drenagem do HTTP);
 3. **devolve** (`ChangeMessageVisibility 0`) as que foram recebidas e não começaram, para outra
    instância pegar na hora;
 4. o banco só fecha **depois** (o hook do consumidor roda antes do hook do MikroORM; há um teste
@@ -113,7 +120,7 @@ como o filtro HTTP faz. Nunca há ack silencioso.
 
 ### 9. Ligado por padrão, desligado nos testes, e filas de teste separadas
 `SQS_CONSUMER_ENABLED` vale `true` por padrão (é o que o `docker compose up` espera). Em
-`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da Fase 4), e
+`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da suíte de concorrência), e
 `SQS_QUEUE_NAME`/`SQS_DLQ_NAME` apontam para filas **só de teste** (`test-app-wager-transactions*`).
 Resultado: a suíte passa com a stack inteira no ar (`docker compose up -d`, com o consumidor do app
 de verdade ligado nas filas reais), porque **nenhum teste envia mensagem às filas reais**. O único
@@ -125,11 +132,11 @@ processos da suíte de concorrência não a consomem.
 ## Alternativas consideradas
 - **Só o redrive para os permanentes**: mais simples e atômico, mas bloqueia o grupo FIFO por N
   entregas e a DLQ perde o motivo.
-- **Conflitos de idempotência na DLQ** (manual): enche a DLQ com mensagens que o operador não tem
+- **Conflitos de idempotência na DLQ**: enche a DLQ com mensagens que o operador não tem
   o que fazer; o `warn` com os ids dá o mesmo rastro.
 - **`maxReceiveCount` 5**: só 60 s de espera total.
 - **Processar o lote em paralelo sem agrupar por grupo**: mais vazão, mas disputa o lock da mesma
-  wallet e prende conexões do pool (o limite medido na Fase 4, ADR-0007).
+  wallet e prende conexões do pool (o limite da wallet quente, ADR-0007; refaça com `bun test test/concurrency/hot-wallet.test.ts`).
 
 ## Consequências
 + Ack só depois do commit; reentrega vira replay; permanentes saem da frente na 1ª entrega, com

@@ -19,6 +19,10 @@ import {
   uuid,
 } from '../support/persistence.js';
 import { createScenario, type Wallet } from '../support/wager-scenarios.js';
+import { tamperSql } from '../support/tamper.js';
+
+// A divergência é criada de propósito, por fora da aplicação: com os triggers desligados.
+const tamperDb = () => tamperSql(db().orm.em);
 
 const db = usePersistence();
 const s = createScenario(db, { start: new Date() });
@@ -93,7 +97,7 @@ describe('POST /wallets/:walletId/reconciliation (the use case)', () => {
 
   test('a stored balance ABOVE the ledger: positive difference, balance_mismatch, consistent false', async () => {
     const wallet = await walletWithMovements(3);
-    await s.sql('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
+    await tamperDb()('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
       wallet.id,
     ]);
     expect(
@@ -109,9 +113,10 @@ describe('POST /wallets/:walletId/reconciliation (the use case)', () => {
 
   test('a stored balance BELOW the ledger: the difference is NEGATIVE', async () => {
     const wallet = await walletWithMovements(3);
-    await s.sql('UPDATE wallets SET balance = balance - 2.50 WHERE id = ?', [
-      wallet.id,
-    ]);
+    await tamperDb()(
+      'UPDATE wallets SET balance = balance - 2.50 WHERE id = ?',
+      [wallet.id],
+    );
     const result = await useCaseFor().useCase.execute({ walletId: wallet.id });
     expect(result.difference).toEqual({ amount: '-2.50', currency: 'BRL' });
     expect(result.consistent).toBe(false);
@@ -151,7 +156,7 @@ describe('POST /wallets/:walletId/reconciliation (the use case)', () => {
 
   test('the stored version ahead of the last ledger entry is a ledger_gap (an operation was saved with no ledger line)', async () => {
     const wallet = await walletWithMovements(2);
-    await s.sql('UPDATE wallets SET version = version + 1 WHERE id = ?', [
+    await tamperDb()('UPDATE wallets SET version = version + 1 WHERE id = ?', [
       wallet.id,
     ]);
     expect(
@@ -161,7 +166,7 @@ describe('POST /wallets/:walletId/reconciliation (the use case)', () => {
 
   test('NEVER corrects anything: the tampered balance, the ledger and the version stay exactly as found', async () => {
     const wallet = await walletWithMovements(3);
-    await s.sql('UPDATE wallets SET balance = balance + 7 WHERE id = ?', [
+    await tamperDb()('UPDATE wallets SET balance = balance + 7 WHERE id = ?', [
       wallet.id,
     ]);
     const before = {
@@ -211,7 +216,7 @@ describe('what the reconciliation reports to the metrics', () => {
 
   test('a divergent run counts a divergent run, the divergence by kind, and sets the gauge', async () => {
     const wallet = await walletWithMovements(1);
-    await s.sql('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
+    await tamperDb()('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
       wallet.id,
     ]);
     const { registry, useCase } = useCaseFor();
@@ -245,7 +250,7 @@ describe('what the reconciliation reports to the metrics', () => {
 
   test('the TOTAL still shows a divergence after a clean check of ANOTHER wallet (the gauge alone would hide it)', async () => {
     const bad = await walletWithMovements(1);
-    await s.sql('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
+    await tamperDb()('UPDATE wallets SET balance = balance + 1 WHERE id = ?', [
       bad.id,
     ]);
     const good = await walletWithMovements(1);

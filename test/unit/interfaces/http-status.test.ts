@@ -62,8 +62,10 @@ describe('statusOfError: the HTTP status of an error code', () => {
     [FailureCode.AmountMismatch]: 422,
     [FailureCode.ReferenceAlreadyReversed]: 422,
     [FailureCode.ReferenceSettled]: 422,
+    [FailureCode.BalanceLimitExceeded]: 422,
     // 503 e 500
     [FailureCode.DependencyUnavailable]: 503,
+    [FailureCode.ProcessingFailed]: 500,
     [ApiOnlyErrorCode.InternalError]: 500,
     // autenticação (ADR-0010)
     [ApiOnlyErrorCode.Unauthenticated]: 401,

@@ -134,7 +134,7 @@ describe('GET /wallets/:walletId/ledger (the use case)', () => {
     const wallet = await walletWithMovements(5);
     const page = await listLedger().execute({ walletId: wallet.id, limit: 2 });
     expect(page.nextCursor).not.toBeNull();
-    expect(decodeLedgerCursor(page.nextCursor as string)).toBe(
+    expect(decodeLedgerCursor(page.nextCursor as string, wallet.id)).toBe(
       page.items.at(-1)?.walletVersion as number,
     );
   });
@@ -284,5 +284,46 @@ describe('GET /wagering/transactions/... (the use case)', () => {
         getTransaction().byProviderKey('provider-z', placed.external),
       ),
     ).toBeInstanceOf(TransactionNotFoundError);
+  });
+});
+
+// Bug 7 do avaliador: o cursor era base64 de { v, walletVersion }, sem dizer de que wallet era. Um
+// cursor emitido para a wallet A funcionava na wallet B (pulando para a versão dele). Agora ele
+// carrega o walletId e é recusado com 400 em outra wallet.
+describe('the ledger cursor belongs to one wallet', () => {
+  test('a cursor issued for wallet A is refused on wallet B with INVALID_PAYLOAD', async () => {
+    const a = await walletWithMovements(5);
+    const b = await walletWithMovements(5);
+    const page = await listLedger().execute({ walletId: a.id, limit: 2 });
+    const error = await rejectionOf(
+      listLedger().execute({
+        walletId: b.id,
+        limit: 2,
+        cursor: page.nextCursor as string,
+      }),
+    );
+    expect(error).toMatchObject({ code: 'INVALID_PAYLOAD' });
+  });
+
+  test('a cursor of the old format (no walletId) is refused', async () => {
+    const a = await walletWithMovements(3);
+    const old = Buffer.from(
+      JSON.stringify({ v: 1, walletVersion: 3 }),
+    ).toString('base64url');
+    const error = await rejectionOf(
+      listLedger().execute({ walletId: a.id, cursor: old }),
+    );
+    expect(error).toMatchObject({ code: 'INVALID_PAYLOAD' });
+  });
+
+  test('the cursor of the same wallet still pages', async () => {
+    const a = await walletWithMovements(5);
+    const first = await listLedger().execute({ walletId: a.id, limit: 2 });
+    const second = await listLedger().execute({
+      walletId: a.id,
+      limit: 2,
+      cursor: first.nextCursor as string,
+    });
+    expect(second.items).toHaveLength(2);
   });
 });

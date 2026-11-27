@@ -21,7 +21,7 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
   de uma reversão é lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
   **toda decisão de estado ou de dinheiro acontece sob o lock da wallet; colunas só de
   agendamento (`next_attempt_at`) podem ser escritas sem ele, porque toda decisão relê sob o
-  lock**. Isso vale inclusive para o worker de `PENDING_REFERENCE` (Fase 6, ADR-0013). Como a referência pertence à mesma
+  lock**. Isso vale inclusive para o worker de `PENDING_REFERENCE` (ADR-0013). Como a referência pertence à mesma
   wallet, quem tem o lock a vê estável: ninguém pode mudá-la enquanto a decisão é tomada. Se
   ela pertencer a outra wallet, nada a protege, mas a política a recusa com
   `REFERENCE_MISMATCH` antes de usar o que leu. Quem quebrar essa regra (gravar numa wallet
@@ -77,21 +77,46 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 
 ## Consequências
 + Fácil de provar correto: quem tem o lock vê o saldo final, e o teste de concorrência
-  (Fase 4) confere o saldo contra o ledger.
+  (a suíte de concorrência) confere o saldo contra o ledger.
 + Sem deadlock por desenho, e o timeout vira um 503 que o provedor sabe tratar.
 − Operações na mesma wallet são serializadas. É o comportamento desejado, mas o limite de
   vazão de uma wallet muito quente é o de uma transação por vez.
 − O 503 por `lock_timeout` é contado por causa em `wager_db_unavailable_total{reason}` (ADR-0014),
-  e o limite de 5 s pode ser ajustado com medição (`DB_LOCK_TIMEOUT_MS`).
+  e o limite de 5 s pode ser ajustado (`DB_LOCK_TIMEOUT_MS`).
 − Escrever `INSERT` e `UPDATE` à mão tira do MikroORM o rastreamento de mudanças: cada
   gravação nova é um método do repositório, com teste contra o Postgres real.
 
-## Limite conhecido e trabalho futuro (medido na Fase 4)
-Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**. Numa hot wallet as
-operações são processadas uma por vez, mas cada requisição na fila ocupa uma das 20 conexões do
-processo; quando elas se esgotam, as seguintes esperam no máximo 1 s por uma conexão livre e levam
-**503 com `Retry-After`**. Medido com 290 requisições simultâneas na mesma wallet (1 processo e 3
-processos): de 240 a 530 respostas 503, **100% por pool sem conexão e nenhuma por `lock_timeout`**.
+## Limite conhecido e trabalho futuro
+**O 503 aparece em qualquer rajada maior que o pool**, não só na wallet quente. Cada requisição
+ocupa uma conexão do pool (20 por processo, `DB_POOL_MAX`) durante a transação inteira; quando
+chegam mais requisições ao mesmo tempo do que há conexões, as que sobram esperam
+`DB_ACQUIRE_TIMEOUT_MS` por uma conexão livre e levam **503 com `Retry-After`**, mesmo em wallets
+distintas. Rajada de 150 requisições em 30 wallets distintas (5 BETs de 30,00 em cada wallet de
+100,00), 3 execuções por valor, um processo (medido durante o desenvolvimento (27/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5)):
+
+| Acquire timeout | 503 na 1ª tentativa (de 150) | Tempo total | p95 | Rodadas de reenvio |
+| --- | --- | --- | --- | --- |
+| 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
+| 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
+| 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+
+Em todas as execuções as 30 wallets terminaram certas (10,00, consistentes com o ledger) depois do
+reenvio dos 503. A vazão é a mesma nos três: um timeout maior troca 503 por espera. O padrão é
+**3 s**: corta de 50% a 80% dos 503 de 1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido
+porque a espera pela conexão ficaria igual ao `lock_timeout` (5 s), e o pior caso de uma requisição
+dobraria para cerca de 10 s, o que tende a estourar o timeout do provedor e gerar reenvio de qualquer
+jeito. Refaça com:
+
+```bash
+DB_ACQUIRE_TIMEOUT_MS=1000 docker compose up -d --wait app   # ou 3000, 5000
+bun scripts/burst.ts                                          # 150 requisições, 30 wallets
+```
+
+Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**: numa hot wallet as
+operações são processadas uma por vez e as conexões acabam mais cedo. Com o acquire timeout antigo
+(1 s) e 290 requisições simultâneas na mesma wallet (1 processo e 3
+processos): de 240 a 530 respostas 503 (medido durante o desenvolvimento (26/11/2026, Windows 11 com
+Docker Desktop, Bun 1.4.5); uma execução se refaz com `bun test test/concurrency/hot-wallet.test.ts`), **100% por pool sem conexão e nenhuma por `lock_timeout`**.
 Todo reenvio com a mesma `Idempotency-Key` foi seguro (uma linha por chave, saldo e ledger batendo).
 
 Isto **não é um defeito**: é o controle de admissão funcionando, recusando com segurança em vez de
@@ -104,5 +129,5 @@ pool, que fica livre para quem de fato trabalha. O lock `FOR UPDATE` continua se
 entre processos; a fila só evita que as esperas dentro de um processo consumam conexões. Exige
 limite de tamanho e de espera da fila (senão vira enfileirar para sempre) e muda o desenho deste
 ADR, então entra com ADR próprio. Alternativas mais baratas, descartadas por ora: aumentar o pool
-(3 processos × 50 passam dos 100 do Postgres) e subir o acquire timeout (o manual fixa 1 s de
-propósito; dá para medir só com `DB_ACQUIRE_TIMEOUT_MS`).
+(3 processos × 50 passam dos 100 do Postgres). O acquire timeout subiu de 1 s para 3 s pela tabela acima (5 s zera os 503 da rajada, mas
+soma com o `lock_timeout` e dobra o pior caso).

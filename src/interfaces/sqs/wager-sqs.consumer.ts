@@ -312,7 +312,9 @@ export class WagerSqsConsumer {
     } else if (disposition.outcome === 'FAILED') {
       this.logger.error(entry);
     } else {
-      this.logger.debug(entry);
+      // info, e não debug: no LOG_LEVEL padrão é a única linha que liga o messageId ao
+      // transactionId de uma mensagem consumida com sucesso (enunciado, seção 12).
+      this.logger.log(entry);
     }
   }
 }

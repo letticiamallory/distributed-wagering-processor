@@ -82,6 +82,15 @@ describe('the process dies between the commit and the publication', () => {
     try {
       await b.waitReady();
       await events.collect(2);
+      // O publisher envia ao SQS com a transação aberta e SÓ DEPOIS marca published_at e faz o
+      // COMMIT (ADR-0012). As mensagens chegam na fila antes desse commit: matar B logo depois do
+      // collect podia cair entre o envio e o commit, e as linhas ficavam sem published_at (a falha
+      // intermitente, mais provável sob carga). Espera o commit antes de matar.
+      await waitFor('the second instance to commit published_at', async () =>
+        (await outboxRowsOf(s.sql, [wallet.id])).every(
+          (r) => r.published_at !== null,
+        ),
+      );
     } finally {
       await b.kill();
     }
@@ -114,7 +123,11 @@ describe('the process dies between the commit and the publication', () => {
     const output = new Response(child.stdout as ReadableStream).text();
     const errors = new Response(child.stderr as ReadableStream).text();
     const code = await child.exited;
-    expect(code, await errors).toBe(137);
+    // Morreu mesmo (kill -9). No POSIX o sinal é visível; no Windows só o código diferente de 0.
+    expect(code, await errors).not.toBe(0);
+    if (process.platform !== 'win32') {
+      expect(child.signalCode).toBe('SIGKILL');
+    }
     expect(await output).toContain('SENT');
 
     // O COMMIT não aconteceu: nada ficou marcado como publicado, embora o SQS tenha recebido.

@@ -1,4 +1,6 @@
 import { Global, Module, type OnModuleDestroy } from '@nestjs/common';
+import { DeliveryFailureLog } from '../../application/ports/delivery-failure-log.js';
+import { MikroOrmDeliveryFailureLog } from './repositories/mikro-orm-delivery-failure-log.js';
 import { MikroORM } from '@mikro-orm/postgresql';
 import { Clock } from '../../application/ports/clock.js';
 import { IdGenerator } from '../../application/ports/id-generator.js';
@@ -87,6 +89,12 @@ import { MikroOrmWagerTransactionReader } from './repositories/mikro-orm-wager-t
       inject: [MikroORM],
     },
     {
+      // A prova das falhas permanentes do consumidor (ADR-0016).
+      provide: DeliveryFailureLog,
+      useFactory: (orm: MikroORM) => new MikroOrmDeliveryFailureLog(orm.em),
+      inject: [MikroORM],
+    },
+    {
       // O /health/ready testa o banco por aqui (um SELECT 1 de verdade, com prazo).
       provide: PostgresProbe,
       useFactory: (orm: MikroORM) => new PostgresProbe(orm.em),
@@ -108,6 +116,7 @@ import { MikroOrmWagerTransactionReader } from './repositories/mikro-orm-wager-t
     LedgerReader,
     ReconciliationReader,
     PendingReferenceQueue,
+    DeliveryFailureLog,
     PostgresProbe,
     Clock,
     IdGenerator,

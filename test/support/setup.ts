@@ -22,6 +22,10 @@ process.env.AWS_REGION ??= 'us-east-1';
 // um .env de desenvolvimento não pode ligá-lo e fazer a suíte competir pela fila de verdade.
 process.env.SQS_CONSUMER_ENABLED = 'false';
 
+// O encerramento drena o HTTP por 5 s no SIGTERM (C7). Nos testes (e nos processos filhos, que
+// herdam este ambiente) a drenagem é curta, para um SIGTERM não custar 5 s por teste.
+process.env.HTTP_SHUTDOWN_DRAIN_MS ??= '200';
+
 // Os nomes das filas dos apps de teste (inclusive os processos filhos) apontam para filas SÓ DE
 // TESTE, nunca para as reais. Assim a suíte passa com a stack inteira no ar (docker compose up -d,
 // com o consumidor do app de verdade ligado na wager-transactions.fifo): ninguém disputa a fila.

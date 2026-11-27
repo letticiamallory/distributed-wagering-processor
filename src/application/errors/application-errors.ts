@@ -128,6 +128,20 @@ export class DependencyUnavailableError extends ApplicationError {
   }
 }
 
+// O banco recusou o DADO (classe 22: encoding, overflow numérico, JSON inválido...; e o 08P01, que
+// o Postgres devolve quando a mensagem tem um NUL). Reenviar o mesmo dado dá o mesmo erro, então é
+// PERMANENTE: 500 no HTTP (a validação deveria tê-lo barrado antes: é bug nosso) e DLQ direto na
+// fila, nunca retry. Nada foi gravado.
+export class PermanentDataError extends ApplicationError {
+  readonly code = ApiOnlyErrorCode.InternalError;
+  constructor(
+    readonly sqlState: string,
+    cause?: unknown,
+  ) {
+    super(`The database refused the data (${sqlState})`, { cause });
+  }
+}
+
 // Sinal da infraestrutura: uma constraint UNIQUE recusou a gravação. O caso de uso decide
 // pela constraint (corrida de idempotência roda de novo; as outras são bug). Se escapar,
 // vira 500: o banco fez o trabalho dele e o código tem um bug.

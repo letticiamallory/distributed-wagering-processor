@@ -20,11 +20,17 @@ export enum FailureCode {
   // BET que já tem um WIN PROCESSED (e não revertido) não pode ser revertida: o jogador
   // ficaria com o prêmio e com a aposta de volta (ADR-0005).
   ReferenceSettled = 'REFERENCE_SETTLED',
+  // O crédito passaria do teto do Money (16 dígitos inteiros, 9999999999999999.99): rejeitado
+  // antes de gravar, em vez de estourar no meio da transação.
+  BalanceLimitExceeded = 'BALANCE_LIMIT_EXCEEDED',
   DependencyUnavailable = 'DEPENDENCY_UNAVAILABLE',
+  // Erro PERMANENTE de infraestrutura (enunciado 6.3): a transação fica FAILED, terminal e auditável.
+  // Só é gravado com prova de que nenhuma tentativa foi transitória (ADR-0016).
+  ProcessingFailed = 'PROCESSING_FAILED',
 }
 
 export type FailureCategory =
-  'validation' | 'idempotency' | 'business' | 'transient';
+  'validation' | 'idempotency' | 'business' | 'transient' | 'permanent';
 
 export interface FailureCodeInfo {
   category: FailureCategory;
@@ -62,10 +68,12 @@ const INFO: Record<FailureCode, FailureCodeInfo> = {
   [FailureCode.AmountMismatch]: business,
   [FailureCode.ReferenceAlreadyReversed]: business,
   [FailureCode.ReferenceSettled]: business,
+  [FailureCode.BalanceLimitExceeded]: business,
   [FailureCode.DependencyUnavailable]: {
     category: 'transient',
     retryable: true,
   },
+  [FailureCode.ProcessingFailed]: { category: 'permanent', retryable: false },
 };
 
 export function failureCodeInfo(code: FailureCode): FailureCodeInfo {

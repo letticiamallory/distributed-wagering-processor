@@ -28,7 +28,9 @@ afterAll(async () => {
     .getConnection()
     .execute(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)`);
   await admin.close();
-});
+  // O mesmo prazo do beforeAll: apagar um banco com o schema inteiro passa de 5 s sob a carga da
+  // suíte completa no Docker do Windows.
+}, 30_000);
 
 async function run() {
   const child = Bun.spawn([process.execPath, ENTRYPOINT], {

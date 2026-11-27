@@ -17,3 +17,4 @@ Uma decisão por arquivo, numeração sequencial e nunca reaproveitada. Para mud
 | [0013](0013-pending-reference-worker-and-retry-policy.md) | Worker de `PENDING_REFERENCE` e a política de retentativa | Aceito |
 | [0014](0014-observability-json-logs-prometheus-metrics-and-health.md) | Observabilidade: logs JSON, métricas Prometheus e health checks | Aceito |
 | [0015](0015-queries-cursor-pagination-and-read-only-reconciliation.md) | Consultas, paginação por cursor e reconciliação somente leitura | Aceito |
+| [0016](0016-failed-status-only-with-proof.md) | `FAILED` só com prova de que nenhuma tentativa foi transitória | Aceito |

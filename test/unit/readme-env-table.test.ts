@@ -48,6 +48,9 @@ const FROM_CODE: Record<string, (env: NodeJS.ProcessEnv) => string> = {
     ),
   DB_LOCK_TIMEOUT_MS: (env) => String(loadLockTimeoutMs(env)),
   RETRY_AFTER_SECONDS: (env) => String(loadHttpConfig(env).retryAfterSeconds),
+  HTTP_SHUTDOWN_DRAIN_MS: (env) => String(loadHttpConfig(env).shutdownDrainMs),
+  HTTP_SHUTDOWN_TIMEOUT_MS: (env) =>
+    String(loadHttpConfig(env).shutdownTimeoutMs),
   LOG_LEVEL: (env) => loadLogLevel(env),
   PENDING_REFERENCE_MAX_ATTEMPTS: (env) =>
     String(loadPendingReferenceSchedule(env).maxAttempts),

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FailureCode } from '../../domain/errors/failure-code.js';
+import { isIso4217Currency } from '../../domain/money/iso-4217.js';
 import { Money } from '../../domain/money/money.js';
 import { InvalidMoneyError } from '../../domain/money/money.errors.js';
 import {
@@ -12,12 +13,31 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
 const notBlank = (value: string) => value.trim() !== '';
 
-// Texto livre do provedor: não pode ser vazio nem branco, e tem um teto de tamanho.
+// Caracteres de controle C0 (U+0000 a U+001F, inclusive o NUL, \t e \n), DEL e C1 (U+007F a U+009F).
+// O NUL o PostgreSQL nem aceita num TEXT (08P01); os outros não têm lugar num identificador.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
+// Um surrogate alto sem o baixo depois, ou um baixo sem o alto antes (o que String.isWellFormed, do
+// ES2024, recusaria; o tsconfig ainda não inclui essa lib).
+const LONE_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+
+// Texto que pode ser guardado e logado: sem caractere de controle e UTF-16 bem formado (um surrogate
+// isolado não é Unicode e o JSONB da outbox o recusa com 22P02). As mensagens são fixas: nunca
+// repetem o valor recebido.
+export const isStorableText = (value: string): boolean =>
+  !LONE_SURROGATE.test(value) && !CONTROL_CHARACTER.test(value);
+export const STORABLE_TEXT_MESSAGE =
+  'must not contain control characters or invalid Unicode';
+
+// Texto livre do provedor: não pode ser vazio nem branco, tem um teto de tamanho, e tem que poder
+// ser guardado.
 export const text = (max = MAX_TEXT_LENGTH) =>
   z
     .string()
     .max(max, `must have at most ${max} characters`)
-    .refine(notBlank, 'must not be blank');
+    .refine(notBlank, 'must not be blank')
+    .refine(isStorableText, STORABLE_TEXT_MESSAGE);
 
 // walletId e playerId são colunas UUID: um valor que não seja UUID chegaria ao banco e
 // viraria erro 22P02 (500). Aceita qualquer UUID (guid, não só os de versão RFC) e
@@ -31,7 +51,10 @@ export const uuid = z
 // é validado pelo Money (erro de valor).
 export const moneyInput = z.object({
   amount: z.string(),
-  currency: z.string().regex(/^[A-Z]{3}$/, 'must be 3 uppercase letters'),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'must be 3 uppercase letters')
+    .refine(isIso4217Currency, 'must be an ISO-4217 currency code'),
 });
 
 export function detailsOf(error: z.ZodError): InvalidCommandDetail[] {

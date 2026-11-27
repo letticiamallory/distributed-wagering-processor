@@ -1,4 +1,4 @@
-import type { FailureCode } from '../../domain/errors/failure-code.js';
+import { FailureCode } from '../../domain/errors/failure-code.js';
 import { InboxMessage } from '../../domain/messaging/inbox-message.js';
 import type { MoneyProps } from '../../domain/money/money.js';
 import type { PendingReferenceSchedule } from '../../domain/wager/pending-reference-schedule.js';
@@ -14,6 +14,7 @@ import {
   ExternalIdConflictError,
   IdempotencyKeyReusedError,
   InboxMessageReusedError,
+  PermanentDataError,
   UnresolvedIdempotencyRaceError,
   WalletNotFoundError,
 } from '../errors/application-errors.js';
@@ -93,13 +94,141 @@ export class ProcessWagerTransactionUseCase {
     const started = performance.now();
     const channel = channelOf(context);
     try {
-      const result = await this.process(input, context);
+      const result = await this.processOrFail(input, context);
       this.observe(channel, outcomeOf(result), started);
       return result;
     } catch (error) {
       this.observe(channel, 'error', started);
       throw error;
     }
+  }
+
+  // Gatilho do FAILED no HTTP (ADR-0016): o banco recusou o DADO (PermanentDataError), o que é
+  // determinístico; reenviar daria o mesmo erro. Sem histórico de entregas para conferir (cada
+  // requisição HTTP é uma tentativa nova), grava FAILED na hora. Se nem isso passar (o dado ruim
+  // está na própria linha), o erro original segue (500). Na fila quem decide é o consumidor, com a
+  // prova de que nenhuma entrega foi transitória.
+  private async processOrFail(
+    input: unknown,
+    context: ProcessWagerContext,
+  ): Promise<ProcessWagerResult> {
+    try {
+      return await this.process(input, context);
+    } catch (error) {
+      if (!(error instanceof PermanentDataError) || context.inbox) {
+        throw error;
+      }
+      try {
+        return await this.fail(input, context);
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  // Grava a transação como FAILED (PROCESSING_FAILED), terminal e auditável (enunciado 6.3,
+  // ADR-0016). Numa transação própria (a original foi desfeita), SOB o lock da wallet, sem saldo,
+  // sem ledger e sem evento: a linha gravada é a auditoria. Se a chave já tem resultado (outra
+  // entrega terminou antes), devolve esse resultado: nunca sobrescreve. Wallet inexistente não vira
+  // FAILED (WALLET_NOT_FOUND, nada gravado). Quem chama decide QUANDO (o consumidor só com a prova
+  // de que nenhuma entrega foi transitória).
+  async fail(
+    input: unknown,
+    context: ProcessWagerContext,
+  ): Promise<ProcessWagerResult> {
+    const { command, payloadHash } = this.prepare(input, context);
+    const result = await this.uow.run(async (repositories) => {
+      const wallet = await repositories.wallets.lockById(command.walletId);
+      if (!wallet) {
+        throw new WalletNotFoundError(command.walletId);
+      }
+      const known = await this.findPriorOutcome(command, payloadHash, context, {
+        transactions: repositories.transactions,
+        inbox: repositories.inbox,
+      });
+      if (known) {
+        if (context.inbox) {
+          await this.recordReplayedMessage(
+            repositories,
+            context.inbox,
+            payloadHash,
+          );
+        }
+        return known;
+      }
+      const now = this.clock.now();
+      const transaction = this.newTransaction(
+        command,
+        payloadHash,
+        context,
+        now,
+      );
+      transaction.fail(FailureCode.ProcessingFailed);
+      await repositories.transactions.insert(transaction);
+      if (context.inbox) {
+        await this.recordReplayedMessage(
+          repositories,
+          context.inbox,
+          payloadHash,
+        );
+      }
+      return toResult(transaction, false);
+    });
+    if (!result.idempotentReplay) {
+      this.metrics.increment('wager_transactions_total', {
+        status: result.status,
+        kind: command.kind,
+      });
+    }
+    return result;
+  }
+
+  private prepare(
+    input: unknown,
+    context: ProcessWagerContext,
+  ): { command: ProcessWagerTransactionCommand; payloadHash: string } {
+    const command = parseProcessWagerTransactionCommand(
+      input,
+      context.idempotencyKey,
+    );
+    const payloadHash = computePayloadHash({
+      providerId: command.providerId,
+      externalTransactionId: command.externalTransactionId,
+      playerId: command.playerId,
+      walletId: command.walletId,
+      roundId: command.roundId,
+      gameId: command.gameId,
+      kind: command.kind,
+      money: command.money,
+      referenceExternalTransactionId: command.referenceExternalTransactionId,
+    });
+    return { command, payloadHash };
+  }
+
+  private newTransaction(
+    command: ProcessWagerTransactionCommand,
+    payloadHash: string,
+    context: ProcessWagerContext,
+    now: Date,
+  ): WagerTransaction {
+    return WagerTransaction.create({
+      id: this.ids.next(),
+      providerId: command.providerId,
+      externalTransactionId: command.externalTransactionId,
+      idempotencyKey: command.idempotencyKey,
+      payloadHash,
+      walletId: command.walletId,
+      playerId: command.playerId,
+      roundId: command.roundId,
+      gameId: command.gameId,
+      kind: command.kind,
+      money: command.money,
+      ...(command.referenceExternalTransactionId !== undefined && {
+        referenceExternalTransactionId: command.referenceExternalTransactionId,
+      }),
+      correlationId: context.correlationId,
+      createdAt: now,
+    });
   }
 
   // A latência de UMA requisição, da entrada do caso de uso até o resultado (ou o erro).
@@ -115,24 +244,8 @@ export class ProcessWagerTransactionUseCase {
     input: unknown,
     context: ProcessWagerContext,
   ): Promise<ProcessWagerResult> {
-    // 1. Entrada inválida nem abre conexão.
-    const command = parseProcessWagerTransactionCommand(
-      input,
-      context.idempotencyKey,
-    );
-
-    // 2. Hash dos campos de negócio (ADR-0008).
-    const payloadHash = computePayloadHash({
-      providerId: command.providerId,
-      externalTransactionId: command.externalTransactionId,
-      playerId: command.playerId,
-      walletId: command.walletId,
-      roundId: command.roundId,
-      gameId: command.gameId,
-      kind: command.kind,
-      money: command.money,
-      referenceExternalTransactionId: command.referenceExternalTransactionId,
-    });
+    // 1. Entrada inválida nem abre conexão. 2. Hash dos campos de negócio (ADR-0008).
+    const { command, payloadHash } = this.prepare(input, context);
 
     // 3 a 10, com UMA reexecução se a corrida do 23505 acontecer: a transação do banco foi
     // desfeita, nada ficou, e a segunda passada enxerga a linha da vencedora (replay ou o 409
@@ -164,6 +277,14 @@ export class ProcessWagerTransactionUseCase {
       inbox: this.inboxReader,
     });
     if (known) {
+      // Uma entrega da fila resolvida como replay também deixa a sua linha na inbox (ADR-0008):
+      // sem ela, o mesmo messageId com OUTRO payload não seria reconhecido depois.
+      if (context.inbox) {
+        const inbox = context.inbox;
+        await this.uow.run((repositories) =>
+          this.recordReplayedMessage(repositories, inbox, payloadHash),
+        );
+      }
       return known;
     }
 
@@ -200,30 +321,20 @@ export class ProcessWagerTransactionUseCase {
       inbox: repositories.inbox,
     });
     if (known) {
+      if (context.inbox) {
+        await this.recordReplayedMessage(
+          repositories,
+          context.inbox,
+          payloadHash,
+        );
+      }
       return known;
     }
 
     // 6 a 8. O domínio decide e o módulo comum grava (a mesma lógica da resolução de uma
     //        pendente): transação no estado em que ficou, saldo, ledger, eventos e o acordar.
     const now = this.clock.now();
-    const transaction = WagerTransaction.create({
-      id: this.ids.next(),
-      providerId: command.providerId,
-      externalTransactionId: command.externalTransactionId,
-      idempotencyKey: command.idempotencyKey,
-      payloadHash,
-      walletId: command.walletId,
-      playerId: command.playerId,
-      roundId: command.roundId,
-      gameId: command.gameId,
-      kind: command.kind,
-      money: command.money,
-      ...(command.referenceExternalTransactionId !== undefined && {
-        referenceExternalTransactionId: command.referenceExternalTransactionId,
-      }),
-      correlationId: context.correlationId,
-      createdAt: now,
-    });
+    const transaction = this.newTransaction(command, payloadHash, context, now);
     await settleWagerTransaction(
       { ids: this.ids, schedule: this.schedule },
       repositories,
@@ -257,6 +368,36 @@ export class ProcessWagerTransactionUseCase {
 
     // 9 e 10. O commit acontece quando o uow.run retorna; o resultado sai com o saldo da época.
     return toResult(transaction, false);
+  }
+
+  // A linha da inbox de uma entrega cujo resultado JÁ existia. INSERT ... ON CONFLICT DO NOTHING:
+  // nova, entra já processada; se já existia (reentrega, ou outra entrega igual que commitou
+  // antes), o hash guardado tem que ser o mesmo, senão o messageId foi reusado com outro conteúdo.
+  private async recordReplayedMessage(
+    repositories: Repositories,
+    inbox: { consumerName: string; messageId: string },
+    payloadHash: string,
+  ): Promise<void> {
+    const now = this.clock.now();
+    const message = InboxMessage.receive({
+      messageId: inbox.messageId,
+      consumerName: inbox.consumerName,
+      payloadHash,
+      receivedAt: now,
+    });
+    if (await repositories.inbox.tryReceive(message)) {
+      message.markProcessed(now);
+      await repositories.inbox.markProcessed(message);
+      return;
+    }
+    const stored = await repositories.inbox.find(
+      inbox.consumerName,
+      inbox.messageId,
+    );
+    if (stored && stored.payloadHash !== payloadHash) {
+      this.conflict('inbox_message_reused');
+      throw new InboxMessageReusedError(inbox.consumerName, inbox.messageId);
+    }
   }
 
   private conflict(kind: string): void {

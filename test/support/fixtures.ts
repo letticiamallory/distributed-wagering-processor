@@ -10,7 +10,7 @@ export function createFixtures(sql: Sql) {
     const playerId = crypto.randomUUID();
     await sql(
       'INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, ?, ?, ?)',
-      [walletId, playerId, currency, '100.00', 1],
+      [walletId, playerId, currency, '0.00', 1],
     );
     return { walletId, playerId };
   }

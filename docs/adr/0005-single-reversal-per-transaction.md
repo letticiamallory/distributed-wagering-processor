@@ -27,11 +27,20 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
     `0.00` não liquida a BET (decisão de 26/11/2026): não paga nada, e um WIN de `0.00` nem pode
     ser revertido (o ROLLBACK exige valor maior que zero), então contá-lo travaria a BET para
     sempre sem que o jogador tivesse prêmio algum. Um WIN de `0.01` já liquida.
+  - **O WIN sem referência também liquida** (decisão de 27/11/2026, achado de avaliação). O
+    enunciado diz que o WIN "pode" referenciar a BET; quando não referencia, um WIN `PROCESSED` de
+    valor maior que zero da **mesma wallet, do mesmo provedor e da mesma rodada** (`roundId`)
+    liquida a BET do mesmo jeito. Antes só contava o WIN que apontava para ela, e o cenário
+    BET 10,00 → WIN 30,00 sem referência → REFUND da BET passava: o jogador terminava com 130,00
+    numa wallet de 100,00 (o prêmio e a aposta de volta). Teste:
+    `test/integration/settled-without-reference.test.ts`. Um WIN que aponta para **outra** BET
+    da rodada liquida aquela, não esta; um WIN de outro provedor numa rodada de mesmo nome não
+    conta (o `roundId` é do provedor). O índice parcial `ix_wtx_round_wins` serve essa busca.
   - Só vale para REFUND e ROLLBACK de uma **BET**. Um ROLLBACK do próprio WIN, ou de um
     REFUND, não é bloqueado.
   - A política não consulta o banco: o caso de uso calcula `hasSettledWin` (existe WIN
-    `PROCESSED` de valor maior que zero com `reference_transaction_id` = BET e sem reversão
-    `PROCESSED` apontando para esse WIN), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
+    `PROCESSED` de valor maior que zero, sem reversão `PROCESSED` apontando para esse WIN, e com
+    `reference_transaction_id` = BET ou, sem referência, da mesma wallet, provedor e rodada), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
     depois de `REFERENCE_ALREADY_REVERSED` e antes da checagem de saldo. O código é de
     negócio, não retentável: o provedor desiste ou reverte o WIN primeiro.
 - **Vários WINs para a mesma BET são permitidos** (decisão de 26/11/2026). Há jogos que
@@ -56,7 +65,7 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
 - `UNIQUE (reference_transaction_id, kind)`: cumpre o texto do enunciado,
   mas deixa passar REFUND seguido de ROLLBACK.
 - Checar só no código: duas instâncias processando ao mesmo tempo passam pela checagem juntas.
-- Deixar o ROLLBACK de uma BET premiada passar (como o texto do manual permite): o jogador
+- Deixar o ROLLBACK de uma BET premiada passar (o enunciado não proíbe): o jogador
   ficaria com o WIN e com a aposta de volta. Fechado pela regra irmã 2.
 - Um WIN por BET (índice único): quebraria o pagamento em partes e as rodadas bônus, que são
   casos reais. O risco que ele cobriria (pagar e devolver a mesma aposta) já está fechado pela
@@ -74,5 +83,5 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
   wallet, para duas requisições não decidirem com a mesma foto do banco.
 − Não há teto para a soma dos WINs de uma BET: o valor do prêmio é do provedor. Quem confere
   se o total pago faz sentido é o provedor; a reconciliação (ADR-0015) só confere saldo contra ledger e não avalia a soma dos prêmios.
-− O caminho normal é o caso de uso (Fase 3) recusar a segunda reversão como rejeição de negócio;
+− O caminho normal é o caso de uso de processamento (ADR-0007) recusar a segunda reversão como rejeição de negócio;
   o índice é a rede de segurança para bugs e corridas, não o fluxo principal.

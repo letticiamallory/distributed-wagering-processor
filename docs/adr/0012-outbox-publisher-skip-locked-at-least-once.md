@@ -9,7 +9,7 @@ publishers concorrentes, sem perder nem duplicar indefinidamente**. O cenário o
 PostgreSQL confirma o commit; o processo morre antes de publicar; outra instância assume; o evento
 é publicado; uma publicação duplicada continua segura para o consumidor.
 
-O fluxo de negócio já grava o evento na tabela `outbox_messages` na mesma transação (Fase 3) e
+O fluxo de negócio já grava o evento na tabela `outbox_messages` na mesma transação (o caso de uso de processamento, ADR-0007) e
 nunca fala com o SQS. Falta quem publique.
 
 ## Decisão
@@ -44,7 +44,7 @@ Dois publishers nunca recebem a mesma linha: o segundo **pula** as travadas e pe
 sem esperar (há um teste com um publisher parado segurando 3 linhas). O custo aceito é a conexão
 presa durante o envio; por isso o cliente SQS tem prazo de 5 s (`OUTBOX_SEND_TIMEOUT_MS`) e poucas
 tentativas internas. **O lease fica como evolução** se a latência do SQS crescer a ponto de a
-conexão presa pesar (a Fase 4 mediu que conexões presas esgotam o pool, ADR-0007).
+conexão presa pesar (conexões presas esgotam o pool, como mostra `bun test test/concurrency/hot-wallet.test.ts`, ADR-0007).
 
 ### 3. At-least-once e quem deduplica
 - O processo morre **antes do `COMMIT`** (inclusive depois do SQS aceitar o lote): a transação

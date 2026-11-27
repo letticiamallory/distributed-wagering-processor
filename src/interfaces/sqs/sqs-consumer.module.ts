@@ -7,6 +7,7 @@ import {
   type OnModuleDestroy,
 } from '@nestjs/common';
 import { MetricsPort } from '../../application/ports/metrics.port.js';
+import { DeliveryFailureLog } from '../../application/ports/delivery-failure-log.js';
 import { ConsumerRetryPolicy } from '../../application/messaging/consumer-retry-policy.js';
 import { WagerMessageHandler } from '../../application/messaging/wager-message-handler.js';
 import { ProcessWagerTransactionUseCase } from '../../application/use-cases/process-wager-transaction.use-case.js';
@@ -51,6 +52,7 @@ export { resolveQueueUrls };
         gateway: QueueGateway | undefined,
         useCase: ProcessWagerTransactionUseCase,
         metrics: MetricsPort,
+        failures: DeliveryFailureLog,
       ) =>
         gateway
           ? new WagerSqsConsumer(
@@ -62,6 +64,7 @@ export { resolveQueueUrls };
                   baseSeconds: config.retryBaseSeconds,
                   maxSeconds: config.retryMaxSeconds,
                 }),
+                failures,
               ),
               {
                 waitSeconds: config.waitSeconds,
@@ -76,6 +79,7 @@ export { resolveQueueUrls };
         QueueGateway,
         ProcessWagerTransactionUseCase,
         MetricsPort,
+        DeliveryFailureLog,
       ],
     },
   ],
@@ -99,7 +103,7 @@ export class SqsConsumerModule
     }
   }
 
-  // O SIGTERM chega aqui (enableShutdownHooks -> app.close()): para de buscar, termina o que
+  // O SIGTERM chega aqui (gracefulShutdown do bootstrap -> app.close(), depois de o HTTP drenar): para de buscar, termina o que
   // está em andamento e devolve o resto. O banco só fecha depois (ver o teste do e2e).
   async onModuleDestroy(): Promise<void> {
     if (this.consumer) {

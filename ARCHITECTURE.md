@@ -5,7 +5,12 @@ com os números que foram medidos. Cada decisão tem um ADR próprio em [docs/ad
 aqui está o quadro todo. Para subir e avaliar em 5 minutos, veja o [README](README.md).
 
 Regra deste documento: só entra o que foi **medido** ou **testado**. Onde algo é desenho e não está
-implementado (a autenticação, a fila por wallet), a seção diz isso na primeira linha.
+implementado (a autenticação, a fila por wallet), a seção diz isso na primeira linha. Todo número
+diz como refazê-lo: com um comando do repositório (`bun run test:concurrency` imprime uma linha
+`[concurrency]` por cenário, com requisições, 503, tempo e invariantes), ou, quando não há comando
+(as sabotagens, feitas editando o código à mão), com a marca "medido durante o desenvolvimento
+(26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5)". Os números marcados assim variam de máquina
+para máquina.
 
 - [1. Arquitetura hexagonal e fronteiras](#1-arquitetura-hexagonal-e-fronteiras)
 - [2. Concorrência: o saldo nunca fica negativo](#2-concorrência-o-saldo-nunca-fica-negativo)
@@ -90,10 +95,13 @@ lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
 O `lock_timeout` é de 5 s (`DB_LOCK_TIMEOUT_MS`): estourou, é falha **transitória** (503 com
 `Retry-After`), sem gravar nada, e reenviar a mesma chave é seguro (seção 3).
 
-### O que acontece quando se remove cada barreira (medido, Fase 4)
+### O que acontece quando se remove cada barreira (medido na suíte de concorrência)
 
 Cada linha é uma **sabotagem**: tirei a proteção do código, rodei a suíte de concorrência e
 registrei o que quebrou. O objetivo é provar que os testes realmente enxergam cada defesa.
+Os números da tabela: medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop,
+Bun 1.4.5), editando o código à mão. Não há script no repositório que refaça as sabotagens; o que dá
+para refazer é a suíte com o código certo (`bun run test:concurrency`).
 
 | Sabotagem | Testes que falham | Sintoma |
 | --- | --- | --- |
@@ -109,41 +117,75 @@ só removendo as três (d) aparece corrupção. Por isso o teste 4 ("wallets dif
 
 ### Cargas da suíte de concorrência
 
-`bun run test:concurrency` (3 execuções seguidas, todas verdes: 86 s, 82 s e 69 s; 17 cenários e
-um **check global** que reconstrói o ledger de todas as wallets criadas, 775 na medição, 0
-violações). Alguns cenários: a mesma BET 50 vezes ao mesmo tempo (10 rodadas, 500 requisições,
+`bun run test:concurrency` (17 cenários na época e um **check global** que reconstrói o ledger de
+todas as wallets criadas; 3 execuções seguidas, todas verdes, em 86 s, 82 s e 69 s, com 775 wallets
+no check global e 0 violações: medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+Desktop, Bun 1.4.5)). Os números de cada execução saem nas linhas `[concurrency]` da própria suíte. Alguns cenários: a mesma BET 50 vezes ao mesmo tempo (10 rodadas, 500 requisições,
 0 falhas de 503); 100 wallets × 2 BETs; 50 wallets em paralelo; **3 processos** da aplicação sobre
 o mesmo banco (200 requisições, 67/67/66 por processo, 0 503). A suíte atual tem 18 cenários
 (entrou o dos 3 publishers).
 
-### O limite conhecido: a wallet quente (medido, **não é defeito**)
+### O limite conhecido: 503 em rajadas maiores que o pool (medido, **não é defeito**)
 
-Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**. Numa wallet
-quente as operações saem uma por vez, mas cada requisição na fila ocupa uma das 20 conexões do
-processo (`DB_POOL_MAX`); quando acabam, as seguintes esperam no máximo 1 s por uma conexão
-(`DB_ACQUIRE_TIMEOUT_MS`) e levam **503 com `Retry-After`**.
+**O 503 aparece em qualquer rajada maior que o pool**, não só na wallet quente. Cada requisição
+ocupa uma conexão do pool (20 por processo, `DB_POOL_MAX`) durante a transação inteira; quando
+chegam mais requisições ao mesmo tempo do que há conexões, as que sobram esperam
+`DB_ACQUIRE_TIMEOUT_MS` por uma conexão livre e levam **503 com `Retry-After`**, mesmo em wallets
+distintas. Rajada de 150 requisições em 30 wallets distintas (5 BETs de 30,00 em cada wallet de
+100,00), 3 execuções por valor, um processo (medido durante o desenvolvimento (27/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5)):
 
-- Medido com **290 requisições simultâneas** na mesma wallet: de 154 a 343 respostas 503 com 1
-  processo; com 3 processos, de 228 a 535 (execuções medidas depois da instrumentação).
+| Acquire timeout | 503 na 1ª tentativa (de 150) | Tempo total | p95 | Rodadas de reenvio |
+| --- | --- | --- | --- | --- |
+| 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
+| 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
+| 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+
+Em todas as execuções as 30 wallets terminaram certas (10,00, consistentes com o ledger) depois do
+reenvio dos 503. A vazão é a mesma nos três: um timeout maior troca 503 por espera. O padrão é
+**3 s**: corta de 50% a 80% dos 503 de 1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido
+porque a espera pela conexão ficaria igual ao `lock_timeout` (5 s), e o pior caso de uma requisição
+dobraria para cerca de 10 s, o que tende a estourar o timeout do provedor e gerar reenvio de qualquer
+jeito. Refaça com:
+
+```bash
+DB_ACQUIRE_TIMEOUT_MS=1000 docker compose up -d --wait app   # ou 3000, 5000
+bun scripts/burst.ts                                          # 150 requisições, 30 wallets
+```
+
+Na **wallet quente** o efeito é mais forte: quem espera o lock de uma wallet **segura uma conexão do
+pool sem fazer nada**, então as operações saem uma por vez e as conexões acabam mais cedo. Os números
+abaixo foram medidos com o acquire timeout antigo, de 1 s:
+
+- **290 requisições simultâneas** na mesma wallet: de 154 a 343 respostas 503 com 1 processo; com
+  3 processos, de 228 a 535 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+  Desktop, Bun 1.4.5), várias execuções). Uma execução se refaz com
+  `bun test test/concurrency/hot-wallet.test.ts` (1 processo) e
+  `bun test test/concurrency/multi-instance.test.ts` (3 processos): a linha `[concurrency]` traz
+  `status503` e `reasons503`.
 - **100% das causas foram "pool sem conexão" e 0 foram `lock_timeout`** (em todas as execuções).
 - Todo reenvio com a mesma `Idempotency-Key` foi seguro: uma linha por chave, saldo e ledger
   batendo.
-- Os extremos vistos antes da instrumentação (1143 e 1408 respostas 503, 21–23 s) **não
-  reproduziram** nas execuções medidas depois. A explicação plausível (a velocidade da máquina:
-  Docker e Postgres no Windows, 3 processos Bun e o runner disputando CPU) **não foi provada**.
-- Jitter no reenvio do cliente (3 execuções por modo, intercaladas): com 3 processos, o jitter
+- Jitter no reenvio do cliente (3 execuções por modo, intercaladas; medido durante o
+  desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5); o modo se escolhe com
+  `CLIENT_RETRY_JITTER=wide bun test test/concurrency/multi-instance.test.ts`, ou `none`/`narrow`): com 3 processos, o jitter
   largo corta os 503 em cerca de 25–30% (228–260 contra 294–400), mas **o tempo total não
   melhora**; com 1 processo o corte está dentro do ruído.
 
 É o **controle de admissão** funcionando: recusar com segurança em vez de enfileirar sem limite.
-O custo é tempo e tráfego de reenvio numa wallet quente, nunca correção.
+O custo é tempo e tráfego de reenvio numa rajada ou numa wallet quente, nunca correção.
+
+**Trabalho futuro: um pool próprio, pequeno, para os workers.** O publisher da outbox e o worker de
+pendentes usam o mesmo pool do HTTP; numa rajada eles também ficam sem conexão e perdem o ciclo
+(`outbox_cycle_failed`, `pending_cycle_failed`). Nada se perde (os eventos e as pendentes ficam no
+banco e saem no ciclo seguinte), só atrasa. Dar aos workers um pool próprio (2 ou 3 conexões, ou
+conexões reservadas) exige um segundo MikroORM e a ligação dele nos módulos; fica registrado aqui,
+não aplicado.
 
 **Correção estrutural (não aplicada):** uma **fila por wallet em memória, antes de pedir a
 conexão**, para quem espera ocupar uma entrada de fila (barata) e não uma conexão. O `FOR UPDATE`
 continua sendo a garantia entre processos. Exige limite de tamanho e de espera da fila e muda o
 desenho do ADR-0007, então entra com ADR próprio. Aumentar o pool foi descartado (3 processos × 50
-passam dos 100 do Postgres) e o acquire timeout de 1 s é do manual (dá para medir com
-`DB_ACQUIRE_TIMEOUT_MS`).
+passam dos 100 do Postgres) e o acquire timeout de 3 s vem da tabela acima.
 
 ---
 
@@ -156,7 +198,11 @@ antes do ack). Duas perguntas diferentes:
 
 - *Esta **entrega** da fila já foi processada?* → **inbox** (`inbox_messages`, chave primária
   `(consumer_name, message_id)`), gravada na **mesma transação** do negócio. Só existe linha de
-  inbox se o negócio também foi confirmado.
+  inbox se o negócio também foi confirmado. **Toda entrega deixa a sua linha, inclusive a que é
+  resolvida como replay** (a operação já tinha chegado por HTTP ou por outro `messageId`): nesse
+  caso a linha entra com `ON CONFLICT DO NOTHING` e, se já existia, o hash guardado tem que ser o
+  mesmo. Assim o mesmo `messageId` com outro payload é sempre `INBOX_MESSAGE_REUSED` (DLQ), e nunca
+  uma operação nova.
 - *Esta **operação de negócio** já foi processada?* → **chave de idempotência**
   (`wager_transactions.idempotency_key` é `UNIQUE`). Vale entre instâncias **e entre canais**: a
   mesma BET por HTTP e por SQS é uma operação só.
@@ -203,12 +249,12 @@ hash (testado). **O hash é parte do contrato**: mudar campo, ordem ou algoritmo
 
 (ADR-0009; `src/domain/errors/failure-code.ts`)
 
-São **18 códigos** de domínio, em 4 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
+São **20 códigos** de domínio, em 5 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
 outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 
 | Categoria | Código | HTTP | O que significa | O que o provedor faz |
 | --- | --- | --- | --- | --- |
-| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim) | **corrigir** e reenviar (com chave nova, se mudou o conteúdo) |
+| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim, moeda fora da ISO-4217, BET com `referenceExternalTransactionId`) | **corrigir** e reenviar (com chave nova, se mudou o conteúdo) |
 | validação | `INVALID_AMOUNT` | 400 | valor fora do formato (`"10.5"`, `"1e3"`, negativo, 3 casas) | **corrigir** |
 | validação | `UNSUPPORTED_KIND` | 400 | `kind` fora de BET, WIN, LOSS, REFUND, ROLLBACK | **corrigir** |
 | idempotência | `IDEMPOTENCY_KEY_REUSED` | 409 | mesma chave com conteúdo diferente | **não reenviar**: é bug do provedor; usar uma chave nova se a operação é outra |
@@ -225,9 +271,11 @@ outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 | negócio | `AMOUNT_MISMATCH` | 422 | o valor da reversão difere do da referência | **desistir** |
 | negócio | `REFERENCE_ALREADY_REVERSED` | 422 | a referência já foi revertida (ADR-0005: uma reversão, de qualquer tipo) | **desistir** |
 | negócio | `REFERENCE_SETTLED` | 422 | reverter uma BET que já pagou prêmio deixaria o jogador com os dois | **desistir** (reverta o WIN antes) |
+| negócio | `BALANCE_LIMIT_EXCEEDED` | 422 | o crédito (WIN, REFUND, ROLLBACK de BET) passaria do teto de 16 dígitos inteiros do saldo (`9999999999999999.99`); o mesmo teto vale para o `initialBalance` (ADR-0006) | **desistir**; uma nova operação só depois de o saldo baixar |
 | transitório | `DEPENDENCY_UNAVAILABLE` | **503** + `Retry-After` | banco fora, pool cheio, `lock_timeout`, deadlock | **reenviar a mesma chave** depois do `Retry-After`; nada foi gravado |
+| permanente | `PROCESSING_FAILED` | **500** | erro permanente de infraestrutura: a transação ficou `FAILED`, terminal e auditável, sem saldo nem ledger (só com a prova de que nenhuma tentativa foi transitória, ADR-0016) | **não reenviar a mesma chave** (devolve sempre o mesmo `FAILED`); corrigir a causa e mandar com chave nova |
 
-Além dos 18, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
+Além dos 20, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
 `TRANSACTION_NOT_FOUND` (404), `INTERNAL_ERROR` (500), `UNAUTHENTICATED` (401) e
 `PROVIDER_FORBIDDEN` (403). O mapa é uma tabela **total** sobre todos eles
 (`Record<ApiErrorCode, number>`): um código novo não compila sem um status.
@@ -252,7 +300,7 @@ Além dos 18, a API tem códigos que **não** são de transação: `WALLET_ALREA
 | Conflito de idempotência, ou wallet já existente | **409** | erro |
 | Corpo acima do limite | **413** | erro |
 | Falha transitória de infraestrutura | **503** + `Retry-After` | erro, `retryable: true` |
-| Erro inesperado (bug), inclusive o replay de uma transação `FAILED` | **500** | erro |
+| Erro inesperado (bug), e o replay de uma transação `FAILED` (ADR-0016) | **500** | erro |
 | Sem credencial, ou provedor sem direito sobre o `providerId` | 401 / 403 | erro (ADR-0010) |
 
 - **Formato único de erro** em todas as rotas: `{ "error": { "code", "message", "retryable",
@@ -260,6 +308,9 @@ Além dos 18, a API tem códigos que **não** são de transação: `WALLET_ALREA
   stack vaza; a causa vai para o **log**, com o mesmo `correlationId`.
 - **`REJECTED` é 422, não 200**: o provedor sabe pelo status que nada foi aplicado e que reenviar
   não muda nada. O custo: dois formatos de corpo de erro (o envelope e o resultado do 422).
+- **O provedor `internal` é do sistema** (é o da transação OPENING): `providerId` `internal`, com
+  qualquer caixa, ou uma `Idempotency-Key` começando com `internal:` é 400 `INVALID_PAYLOAD`, e
+  `GET /providers/internal/...` responde 404 (a OPENING continua legível pelo id da transação).
 - **`Idempotency-Key` repetido** (duas linhas do header) é 400: o Node junta em `"a, b"`, e
   adivinhar qual vale poderia duplicar um débito.
 - **As consultas** (`GET`) respondem **200 para qualquer status** guardado (um `REJECTED` ou um
@@ -286,7 +337,9 @@ disputa pelo lock); a garantia de correção é do banco.
 | `IDEMPOTENCY_KEY_REUSED`, `EXTERNAL_ID_CONFLICT` (terminais e determinísticos) | **ack** + log `warn` com `messageId` e `idempotencyKey` |
 | `DEPENDENCY_UNAVAILABLE` (banco, `lock_timeout`, deadlock, pool) | **não apaga**; devolve a visibilidade com backoff |
 | erro que não sabemos classificar (bug) | tratado como transitório; o limite o leva à DLQ |
-| JSON, envelope ou payload inválido; `WALLET_NOT_FOUND`; mesmo `messageId` com outro conteúdo; erro `critical` | **DLQ** (o `critical` também loga `fatal`, uma vez) |
+| JSON, envelope ou payload inválido (inclusive texto com caractere de controle ou Unicode inválido); `WALLET_NOT_FOUND`; mesmo `messageId` com outro conteúdo; erro `critical` | **DLQ** (o `critical` também loga `fatal`, uma vez) |
+| o banco recusou o **dado** (SQLSTATE classe `22`, ou `08P01`): `PERMANENT_DATA_ERROR` | **DLQ** já: reenviar dá o mesmo erro, e o retry seguraria a wallet por minutos |
+| erro permanente (bug, ou `PermanentDataError`) em **todas** as entregas, com a prova em `consumer_delivery_failures` | grava `FAILED` com `PROCESSING_FAILED` e ack (ADR-0016); sem a prova completa (alguma entrega foi transitória, ou ficou sem registro), DLQ: **uma queda longa do banco nunca vira `FAILED`** |
 | transitório na última entrega permitida | **DLQ** (`RETRIES_EXHAUSTED`) |
 
 - **Por que conflito de idempotência é *ack* e `WALLET_NOT_FOUND` é DLQ:** o conflito é terminal e
@@ -302,9 +355,17 @@ disputa pelo lock); a garantia de correção é do banco.
   da wallet por N entregas por uma mensagem que nunca vai funcionar. Custo aceito: uma
   **duplicata possível na DLQ** se o processo morrer entre o envio e o delete (a deduplicação do
   FIFO a descarta na maioria dos casos; a DLQ não é processada).
+- **SIGTERM, em ordem:** o `/health/ready` vira 503 no ato; o HTTP **drena** por
+  `HTTP_SHUTDOWN_DRAIN_MS` (5 s), atendendo normalmente com o banco aberto, para o balanceador parar
+  de mandar tráfego; o consumidor termina (ou devolve) as mensagens em andamento e os workers param,
+  **com o HTTP ainda no ar** (`/health/live` 200, para um orquestrador não matar o processo no meio
+  de uma mensagem); então o servidor para de aceitar e termina as requisições em andamento
+  (`HTTP_SHUTDOWN_TIMEOUT_MS`); só então o banco fecha. Antes o Nest
+  fechava o banco antes do HTTP, e quem chegava no encerramento levava 503 ou conexão cortada.
 - **SIGTERM:** para de buscar, espera as mensagens em andamento (`SQS_SHUTDOWN_TIMEOUT_MS`) e
   devolve à fila, com visibilidade 0, as que foram recebidas e não começaram.
-- Testes: crash real (processo filho morto com `SIGKILL` antes do delete: a mensagem volta e o
+- Testes: crash real (o processo filho se mata com `SIGKILL` no instante do delete, depois do
+  commit; a mensagem volta e o
   efeito não duplica) e o `SIGTERM` real num processo (só em Linux; no Windows o Node não
   executa handlers de sinal).
 
@@ -319,9 +380,11 @@ rodam ao mesmo tempo sem pegar a mesma linha.
   reenviado. **Quem consome eventos deduplica pelo `eventId`** (contrato); a deduplicação do FIFO (`MessageDeduplicationId = eventId`, janela de 5 min) é só otimização.
 - **Evento preso:** sem DLQ, *retry* infinito com backoff; a partir de 10 tentativas o log sobe
   para `error` (`OUTBOX_STUCK_ATTEMPTS`).
-- **Medido (3 processos, 3 publishers, 30 wallets × 8 apostas):** 510 eventos gerados, 510
-  mensagens entregues, **0 duplicatas** entregues, 240 requisições, 0 respostas 503, 5,7 s,
-  versões 1..9 completas por wallet.
+- **3 processos, 3 publishers, 30 wallets × 8 apostas** (refaça com
+  `bun test test/concurrency/outbox-publishers.test.ts`): 510 eventos gerados, 510 mensagens
+  entregues, **0 duplicatas** entregues, 240 requisições, 0 respostas 503, versões 1..9 completas por
+  wallet. O tempo (5,7 s) foi medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+  Desktop, Bun 1.4.5).
 - **Ordem:** a ordem por wallet **não** é garantida entre publishers nem em falha parcial por
   entrada do `SendMessageBatch` (o SQS pode aceitar os seguintes); o `walletVersion` do evento
   ordena. Criar uma wallet grava 1 evento de abertura (`WalletBalanceChanged`), então os eventos
@@ -333,9 +396,13 @@ Um REFUND, ROLLBACK, WIN ou LOSS pode chegar **antes** da BET que referencia. El
 `PENDING_REFERENCE` (202) e um worker o resolve:
 
 - **Política:** 10 tentativas no total (a primeira gravação conta), espera `min(2^n × 1 s, 5 min)`:
-  9 esperas = 1+2+4+8+16+32+64+128+256 = **511 s, cerca de 8,5 minutos**. (O "14 min" do manual
-  está obsoleto.) Esgotadas, vira `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
+  9 esperas = 1+2+4+8+16+32+64+128+256 = **511 s, cerca de 8,5 minutos**. Esgotadas, vira `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
   `WagerTransactionRejected`: nada fica "pendente para sempre".
+- **O campo `attempts`** conta as tentativas que **não** acharam a referência (cada uma deixou a
+  transação em `PENDING_REFERENCE` e agendou a próxima). A tentativa que **decide** (resolve ou
+  rejeita) não incrementa. Com o limite de 10: uma referência que nunca chega dá 9 tentativas sem
+  achar e a 10ª rejeita, então a transação fica `REJECTED` com `attempts: 9`; uma que chega na 2ª
+  tentativa fica `PROCESSED` com `attempts: 1`. Tentativas feitas = `attempts` + 1.
 - **Acordar:** quando a BET é processada, as pendentes **da mesma wallet** que a esperam são
   agendadas para agora, sob o lock; o worker as resolve no ciclo seguinte (em até 1 s). Se o
   atalho se perder, o `next_attempt_at` vence sozinho.
@@ -362,7 +429,8 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
 - **Roda em `REPEATABLE READ` e `READ ONLY`, sem lock.** O `REPEATABLE READ` dá uma **foto única**
   do banco: o saldo e a soma do ledger são lidos no mesmo instante. Em `READ COMMITTED`, uma
   aposta que commitasse entre as duas leituras faria a conferência acusar uma divergência que não
-  existe (a sabotagem provou isso com escritores concorrentes). O `READ ONLY` faz o banco recusar
+  existe (uma sabotagem mostrou isso com escritores concorrentes: medido durante o desenvolvimento
+  (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5), editando o código). O `READ ONLY` faz o banco recusar
   qualquer escrita nessa transação (também sabotado), e sem lock a conferência **nunca atrasa uma
   aposta**.
 - A diferença sai do próprio banco, em `NUMERIC` (a aplicação não faz conta de dinheiro) e pode
@@ -399,18 +467,19 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
 | `wager_retries_total{component}` | consumidor devolveu a mensagem; outbox reagendou o evento |
 | `wager_dlq_messages_total{reason}`, `consumer_messages_total{outcome}` | o consumidor |
 | `wager_db_unavailable_total{reason}` | o que vira 503: `pool_timeout`, `lock_timeout`, `deadlock`, `serialization`, `connection`, `other` |
+| `wallet_lock_wait_seconds{outcome}` | **espera pelo lock** da wallet (histograma, 1 ms a 5 s): `acquired` ou `timeout`. A disputa aparece aqui antes de virar 503; um p95 de centenas de ms aponta uma wallet quente |
 | `outbox_events_published_total`, `outbox_pending_messages`, `outbox_lag_seconds` | a outbox (as duas últimas são lidas **na raspagem**) |
 | `pending_reference_resolutions_total{outcome}`, `pending_reference_transactions` | o worker e a fila de pendentes |
 | `http_requests_total`, `http_request_duration_seconds` | tráfego (rota como **padrão**, nunca a URL; o resto é `unmatched`) |
 | `wallet_reconciliation_*` | execuções, divergências por tipo, divergências acumuladas, última execução |
 
 - **Health:** `GET /health/live` só diz que o processo responde (não olha o banco, de propósito);
-  `GET /health/ready` confere o **Postgres e o SQS de verdade** e responde 503 enquanto qualquer
+  `GET /health/ready` confere o **Postgres e o SQS de verdade**, e no SQS **as filas, por nome**, de que o processo precisa (a de entrada e a DLQ se o consumidor está ligado, a de eventos se o publisher está ligado): o MiniStack reiniciado responde, mas perdeu as filas, e responde 503 enquanto qualquer
   um estiver fora, **e também no primeiro instante do SIGTERM** (`shutting_down`), para o
   balanceador parar de mandar tráfego. Há testes que derrubam um PostgreSQL e um MiniStack
   **reais** (containers descartáveis) e veem o 503 e depois o 200.
 - `/health` e `/metrics` são **abertos** (enunciado, seção 9).
-- **Sabotagens das Fases 5 a 8** (todas com SHA-256 idêntico antes e depois do experimento):
+- **Sabotagens do consumidor, da outbox e do worker, da observabilidade e das consultas** (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5), editando o código à mão e conferindo o SHA-256 dos arquivos antes e depois; não há script que as refaça):
   consumidor, 10 variantes (apagar antes do commit derrubou 15 testes; sem inbox derrubou 4, e
   note que **o débito não duplica**, porque a chave de idempotência cobre: quem acusa é a linha da
   inbox); outbox e worker, 10 (sem `SKIP LOCKED` derrubou 6); observabilidade, 15 (log que vaza o
@@ -456,14 +525,15 @@ mesma validação do comando.
 
 | Limitação | O que se sabe | Onde |
 | --- | --- | --- |
-| **Wallet quente** responde 503 sob pico | 290 requisições simultâneas na mesma wallet: 154–343 respostas 503 com 1 processo, 228–535 com 3; **100% por pool sem conexão, 0 por `lock_timeout`**; nenhum reenvio duplicou. Correção estrutural (fila por wallet antes da conexão) **não aplicada** | seção 2, ADR-0007 |
+| **Rajada maior que o pool** (20 conexões por processo) responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s (padrão), 19–52 respostas 503 em 150 requisições em 30 wallets (tabela e `bun scripts/burst.ts` na seção 2) | seção 2, ADR-0007 |
+| **Wallet quente** responde 503 sob pico | 290 requisições simultâneas na mesma wallet: 154–343 respostas 503 com 1 processo, 228–535 com 3 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5); uma execução: `bun test test/concurrency/hot-wallet.test.ts`); **100% por pool sem conexão, 0 por `lock_timeout`**; nenhum reenvio duplicou. Correção estrutural (fila por wallet antes da conexão) **não aplicada** | seção 2, ADR-0007 |
 | **Ordem dos eventos** entre publishers | não garantida; o `walletVersion` ordena. Em falha parcial do `SendMessageBatch` o SQS pode aceitar entradas seguintes | seção 6.2, ADR-0012 |
 | **Métricas por processo** | cada instância expõe o próprio `/metrics`; somar entre réplicas é com o Prometheus | seção 8 |
-| **Saldo ↔ ledger só confere sob demanda** | a constraint diferida no banco **não foi implementada**; a reconciliação detecta, não impede, e não há varredura global | seção 7, ADR-0004 |
+| **Saldo ↔ ledger no banco: só o estado final de cada wallet** | a constraint diferida `trg_wallet_balance_has_ledger` recusa no COMMIT um saldo sem o lançamento da versão atual (UPDATE cru do saldo, versão pulada, wallet com saldo sem OPENING). Ela **não** confere a corrente inteira (um `balance_before` de um lançamento antigo, ou um lançamento que aponta para transação de outra wallet, continuam sendo achados da reconciliação, que só detecta), e um superusuário pode desligar triggers | seção 7, ADR-0004 |
 | **Lote do consumidor** | o lote de até 10 mensagens espera o grupo mais lento | seção 6.1 |
 | **Duplicata na DLQ** | possível se o processo morrer entre o envio e o delete | seção 6.1 |
 | **Outbox**: índice `(occurred_at) WHERE published_at IS NULL` não existe | só vale criar se o backlog crescer; hoje não foi medido como necessário | ADR-0012 |
-| **Moedas** | todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
+| **Moedas** | só os códigos ISO-4217 vigentes, numa lista fixa no domínio (`src/domain/money/iso-4217.ts`; uma emenda nova da ISO entra lá); todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
 | **`check:money` é uma heurística de linha** | pega o descuido comum (`parseFloat(amount)`); não prova que não existe `number` em lugar nenhum | ADR-0006 |
 | **Autenticação** | não implementada (desenho na seção 9) | ADR-0010 |
 | **SIGTERM real no Windows** | o Node não executa handlers de sinal no Windows; o teste real roda em Linux (no CI e em container) e no Windows prova só a ligação do encerramento | ADR-0011 |
@@ -491,3 +561,4 @@ mesma validação do comando.
 | [0013](docs/adr/0013-pending-reference-worker-and-retry-policy.md) | Worker de `PENDING_REFERENCE` e a política de retentativa |
 | [0014](docs/adr/0014-observability-json-logs-prometheus-metrics-and-health.md) | Observabilidade: logs JSON, métricas Prometheus e health checks |
 | [0015](docs/adr/0015-queries-cursor-pagination-and-read-only-reconciliation.md) | Consultas, paginação por cursor e reconciliação somente leitura |
+| [0016](docs/adr/0016-failed-status-only-with-proof.md) | `FAILED` só com prova de que nenhuma tentativa foi transitória |

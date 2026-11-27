@@ -32,7 +32,7 @@ export default defineConfig({
     max: intFromEnv('DB_POOL_MAX', 20),
   },
   driverOptions: {
-    connectionTimeoutMillis: intFromEnv('DB_ACQUIRE_TIMEOUT_MS', 1_000),
+    connectionTimeoutMillis: intFromEnv('DB_ACQUIRE_TIMEOUT_MS', 3_000),
   },
   extensions: [Migrator],
   migrations: {

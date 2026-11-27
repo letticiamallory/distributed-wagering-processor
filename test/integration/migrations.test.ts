@@ -14,13 +14,22 @@ const url = new URL(process.env.DATABASE_URL as string);
 url.pathname = `/${DB_NAME}`;
 
 const TABLES = [
+  'consumer_delivery_failures',
   'inbox_messages',
   'outbox_messages',
   'wager_transactions',
   'wallet_ledger_entries',
   'wallets',
 ];
-const FUNCTIONS = ['forbid_ledger_mutation', 'forbid_terminal_change'];
+// As funções de antes da migration de trg_wallet_balance_has_ledger, e as de agora.
+const FUNCTIONS_BEFORE_BALANCE_CHECK = [
+  'forbid_ledger_mutation',
+  'forbid_terminal_change',
+];
+const FUNCTIONS = [
+  'check_wallet_balance_has_ledger',
+  ...FUNCTIONS_BEFORE_BALANCE_CHECK,
+];
 
 let admin: MikroORM;
 let orm: MikroORM;
@@ -81,14 +90,14 @@ const INSERT_PENDING_REFERENCE = `
   VALUES (?, 'p', ?, ?, ?, ?, ?, 'r', 'g', 'REFUND', '10.00', 'BRL', 'PENDING_REFERENCE',
      'ext', 1, now(), 'c')`;
 
-test('the latest migration (PENDING only on INSERT) goes down one step and up again', async () => {
+test('the PENDING-only-on-INSERT migration goes down (with the ones after it) and up again', async () => {
   await orm.migrator.up();
   const connection = orm.em.getConnection();
   const walletId = crypto.randomUUID();
   const playerId = crypto.randomUUID();
   await connection.execute(
     'INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, ?, ?, ?)',
-    [walletId, playerId, 'BRL', '100.00', 1],
+    [walletId, playerId, 'BRL', '0.00', 1],
   );
   const newPending = async () => {
     const id = crypto.randomUUID();
@@ -118,9 +127,12 @@ test('the latest migration (PENDING only on INSERT) goes down one step and up ag
     'cannot be updated to PENDING',
   );
 
-  // down de UMA migration: a regra some, o resto continua (a função existe, o trigger vale).
-  await orm.migrator.down();
-  expect((await schemaObjects()).functions).toEqual(FUNCTIONS);
+  // down até a migration ANTERIOR a ela (desfaz ela e as mais novas, que são só índices): a regra
+  // some, o resto continua (a função existe, o trigger vale).
+  await orm.migrator.down({ to: 'Migration20261126011328_wtx_lookup_indexes' });
+  expect((await schemaObjects()).functions).toEqual(
+    FUNCTIONS_BEFORE_BALANCE_CHECK,
+  );
   const id = await newPending();
   expect(await outcomeOfToPending(id)).toBe('accepted'); // como antes da migration
   await connection.execute(

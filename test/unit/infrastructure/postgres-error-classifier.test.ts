@@ -151,7 +151,6 @@ describe('classifyPersistenceError: everything else is left alone (permanent, 50
     ],
     ['23503', 'insert or update violates foreign key constraint'],
     ['23502', 'null value in column violates not-null constraint'],
-    ['22P02', 'invalid input syntax for type uuid'],
     ['42P01', 'relation does not exist'],
     ['42601', 'syntax error'],
     ['P0001', 'wager_transactions is terminal'],

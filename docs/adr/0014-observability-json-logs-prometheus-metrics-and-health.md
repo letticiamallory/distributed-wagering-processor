@@ -31,7 +31,9 @@ pequeno.
     `debug`.
   - **Consumidor SQS:** `message_acked`, `message_retry`, `message_dead_lettered`, com `messageId`,
     `correlationId` (= `messageId`; sem envelope válido, o id do SQS), `walletId`, `providerId`,
-    `idempotencyKey` e `transactionId`.
+    `idempotencyKey` e `transactionId`. O `message_acked` de sucesso (PROCESSED, REJECTED,
+    PENDING_REFERENCE, replay) sai em `info`, para o `LOG_LEVEL` padrão ligar o `messageId` ao
+    `transactionId`; o conflito de idempotência sai em `warn`.
   - **Workers:** `pending_reference_resolved` (`transactionId`, `walletId`), `outbox_batch_published`
     (quantos), `outbox_event_retry` e `outbox_event_stuck` (`eventId`, `walletId`, tentativas).
 - **O que nunca entra numa linha** (cinco camadas, porque uma só falha em silêncio):
@@ -69,6 +71,7 @@ pequeno.
 | `wager_dlq_messages_total{reason}` | mensagens enviadas à DLQ, por motivo | consumidor |
 | `consumer_messages_total{outcome}` | acked, retried, dead_lettered | consumidor |
 | `wager_db_unavailable_total{reason}` | o que vira 503: `pool_timeout`, `lock_timeout`, `deadlock`, `serialization`, `connection`, `other` | UnitOfWork e leitores |
+| `wallet_lock_wait_seconds{outcome}` | espera pelo `SELECT ... FOR UPDATE` da wallet (histograma, `acquired` ou `timeout`): os conflitos de lock, não só os que estouram | repositório da wallet, pelo `UnitOfWork` |
 | `outbox_events_published_total` | eventos aceitos pelo broker | publisher |
 | `outbox_pending_messages`, `outbox_lag_seconds` | fila e idade do evento mais antigo | coletor, **na raspagem** |
 | `pending_reference_resolutions_total{outcome}` | resolved, still_pending, not_pending, failed | worker |
@@ -101,14 +104,14 @@ Regras que mantêm as séries honestas:
   vê o 200 quando voltam.
 - Ambos abertos, sem autenticação (enunciado, seção 9).
 
-### 4. A métrica de divergência da Fase 8, pronta e sem uso
+### 4. A métrica de divergência da reconciliação
 `wallet_reconciliation_divergences{kind}` (gauge: `balance_mismatch`, `ledger_gap`,
 `negative_balance`), `wallet_reconciliation_last_run_timestamp_seconds` e
 `wallet_reconciliation_runs_total{result}` estão no catálogo, e `reportReconciliation()` (aplicação)
-é a função que a reconciliação chama ao fim de cada execução. **Atualização (Fase 8, ADR-0015):** a
+é a função que a reconciliação chama ao fim de cada execução. **Atualização (ADR-0015):** a
 reconciliação por wallet a usa desde então, e ganhou o contador `wallet_reconciliation_divergences_total`
 (o que alerta, porque o gauge é o da última execução); o gauge `pending_reference_transactions` e o
-503 do `/health/ready` no encerramento também entraram na Fase 8. Uma execução que **terminou**
+503 do `/health/ready` no encerramento também entraram com o ADR-0015. Uma execução que **terminou**
 substitui os valores (o tipo que não aparece volta a 0, para a divergência corrigida sair do alerta);
 uma que **falhou** só conta a falha e deixa os valores e o "último sucesso" como estavam. (O teste que garantia "ninguém a chama" virou "só o `ReconcileWalletUseCase` a chama".)
 
