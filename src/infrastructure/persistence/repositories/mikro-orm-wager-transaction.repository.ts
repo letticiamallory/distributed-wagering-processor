@@ -67,6 +67,32 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
     return count > 0;
   }
 
+  // Existe, nesta rodada (wallet, provedor, roundId), uma BET PROCESSED com um REFUND ou ROLLBACK
+  // PROCESSED apontando para ela? Serve ao WIN sem referência (ADR-0005), sob o lock da wallet.
+  async hasReversedBetInRound(round: {
+    walletId: string;
+    providerId: string;
+    roundId: string;
+  }): Promise<boolean> {
+    const rows = (await this.em.getConnection().execute(
+      `SELECT EXISTS (
+           SELECT 1 FROM wager_transactions bet
+           WHERE bet.wallet_id = ? AND bet.provider_id = ? AND bet.round_id = ?
+             AND bet.kind = 'BET' AND bet.status = 'PROCESSED'
+             AND EXISTS (
+               SELECT 1 FROM wager_transactions reversal
+               WHERE reversal.reference_transaction_id = bet.id
+                 AND reversal.status = 'PROCESSED'
+                 AND reversal.kind IN ('REFUND', 'ROLLBACK')
+             )
+         ) AS reversed`,
+      [round.walletId, round.providerId, round.roundId],
+      'all',
+      this.em.getTransactionContext(),
+    )) as Array<{ reversed: boolean }>;
+    return rows[0]?.reversed === true;
+  }
+
   // WIN PROCESSED que PAGOU alguma coisa (valor > 0), que ninguém reverteu com sucesso, e que é
   // desta BET: aponta para ela, OU não aponta para nada e é da mesma wallet, do mesmo provedor e
   // da mesma rodada (o enunciado diz que o WIN "pode" referenciar a BET; sem isso, um WIN sem

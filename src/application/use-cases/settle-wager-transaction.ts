@@ -54,7 +54,16 @@ export async function settleWagerTransaction(
       ? await repositories.transactions.hasSettledWin(reference)
       : false;
 
+  // Só para um WIN sem referência que paga: a BET da rodada já foi devolvida? Sob o mesmo lock.
+  const roundBetReversed =
+    transaction.kind === WagerTransactionKind.Win &&
+    transaction.referenceExternalTransactionId === undefined &&
+    transaction.affectsBalance()
+      ? await repositories.transactions.hasReversedBetInRound(transaction)
+      : false;
+
   const decision = WagerPolicy.decide({
+    roundBetReversed,
     wallet,
     transaction,
     reference,

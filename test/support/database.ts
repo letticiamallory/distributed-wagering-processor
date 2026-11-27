@@ -10,8 +10,17 @@ import {
 
 // Conexão com o banco de testes, sem preparar nada. Quem só precisa de uma conexão
 // (por exemplo para criar outro banco) usa esta; quem precisa das tabelas, `openTestOrm`.
+// Quanto o pool do PRÓPRIO processo de testes espera por uma conexão (inclusive para abri-la). O
+// padrão de produção (3 s) é curto demais sob a carga da suíte completa no Docker do Windows, com
+// processos filhos subindo e descendo: a primeira consulta de um arquivo chegou a esperar mais que
+// isso. As apps que os testes sobem continuam com o valor de produção.
+export const TEST_CONNECTION_TIMEOUT_MS = 15_000;
+
 export function openOrm(): Promise<MikroORM> {
-  return MikroORM.init(config);
+  return MikroORM.init({
+    ...config,
+    driverOptions: { connectionTimeoutMillis: TEST_CONNECTION_TIMEOUT_MS },
+  });
 }
 
 // O ledger não aceita DELETE, então não dá para limpar tabelas entre testes. Em vez disso,

@@ -89,3 +89,11 @@ API e da fila responde 400 `INVALID_PAYLOAD`, na wallet e na transação. Um tes
 com `Intl.supportedValuesOf('currency')`: toda moeda nossa existe lá (pega erro de digitação), e
 as históricas que o Intl ainda conhece (DEM, FRF, HRK, ANG...) não estão na nossa. Uma moeda
 válida que não é a da wallet continua sendo `422 CURRENCY_MISMATCH`.
+
+**Só moeda corrente** (27/11/2026, segunda avaliação). A lista ISO-4217 também tem códigos que não
+são moeda: `XXX` ("nenhuma moeda"), `XTS` (reservado para testes), os metais `XAU`, `XAG`, `XPT`
+e `XPD`, o direito especial de saque `XDR` e as unidades de conta `XBA`, `XBB`, `XBC`, `XBD`,
+`XSU` e `XUA`. Uma wallet de apostas neles não faz sentido, então saíram da lista e são 400. As
+moedas reais cujo código começa com X ficam (`XAF`, `XOF`, `XPF`, `XCD`, `XCG`), assim como os
+códigos de fundos ligados a uma moeda nacional (`BOV`, `CLF`, `MXV`...), que são valores em dinheiro
+de um país.

@@ -31,8 +31,8 @@
     "lint": "oxlint --type-aware src/ test/",
     "check:money": "bun scripts/check-money.ts",
     "check": "bun scripts/check.ts",
-    "test": "bun test --path-ignore-patterns \"test/concurrency/**\"",
-    "test:concurrency": "bun scripts/concurrency-suite-start.ts && bun test test/concurrency --path-ignore-patterns \"**/global-invariants.test.ts\" && bun test test/concurrency/global-invariants.test.ts",
+    "test": "bun test --timeout 20000 --path-ignore-patterns \"test/concurrency/**\"",
+    "test:concurrency": "bun scripts/concurrency-suite-start.ts && bun test --timeout 20000 test/concurrency --path-ignore-patterns \"**/global-invariants.test.ts\" && bun test --timeout 20000 test/concurrency/global-invariants.test.ts",
     "test:all": "bun run test && bun run test:concurrency",
     "test:watch": "bun test --watch",
     "test:cov": "bun test --coverage"

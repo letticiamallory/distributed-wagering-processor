@@ -315,10 +315,20 @@ livre e levam **503 com `Retry-After`**, mesmo em wallets distintas. Rajada de 1
 | 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
 | 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
 | 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+| 3 s (padrão), **outra máquina** ¹ | 0–85 | 5,1–6,2 s | 4,1–5,7 s | 0–2 |
+
+¹ Medido na segunda avaliação independente (27/11/2026, Windows 11 com Docker Desktop, outra
+máquina), com o mesmo `bun scripts/burst.ts`, 3 execuções: 0, 69 e 85 respostas 503; as 30 wallets
+terminaram certas em todas.
+
+**Estes números são medidas destas máquinas; não são uma propriedade do sistema.** Dependem do host, da
+carga do Docker e do que mais estiver rodando: na segunda avaliação a mesma configuração deu de 0 a 85
+respostas 503 e um p95 de até 5,7 s. O que o sistema garante é outra coisa: nenhum reenvio de um 503
+duplica um lançamento, e o 503 vem com `Retry-After`.
 
 Em todas as execuções as 30 wallets terminaram certas depois do reenvio dos 503. A vazão é a mesma
-nos três: um timeout maior troca 503 por espera. O padrão é **3 s**: corta de 50% a 80% dos 503 de
-1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido porque somaria com o `lock_timeout` (5 s) e
+nos três valores: um timeout maior troca 503 por espera. O padrão é **3 s**: nas medições da tabela cortou de
+50% a 80% dos 503 de 1 s, com o p95 perto de 5 s. 5 s não foi escolhido porque somaria com o `lock_timeout` (5 s) e
 dobraria o pior caso de uma requisição, o que tende a estourar o timeout do provedor. Refaça com:
 
 ```bash
@@ -403,12 +413,18 @@ Interpretações próprias, todas testadas:
   o dinheiro duas vezes. Índice único parcial `uq_wtx_reversed_once`.
 - **Prêmio pago impede devolver a aposta** (`REFERENCE_SETTLED`). Um WIN `PROCESSED` de valor maior
   que zero, não revertido, que aponta para a BET **ou** que não aponta para nada e é da mesma
-  wallet, provedor e rodada, liquida a BET: devolvê-la deixaria o jogador com os dois.
+  wallet, provedor e rodada, liquida a BET: devolvê-la deixaria o jogador com os dois. **A ordem
+  inversa também:** se a BET da rodada já foi devolvida (REFUND ou ROLLBACK), um WIN da mesma rodada,
+  com ou sem referência e de valor maior que zero, é `REFERENCE_ALREADY_REVERSED`. Nas duas ordens, e
+  numa corrida das duas, o jogador nunca fica com a aposta de volta e com o prêmio.
 - **WIN e LOSS de 0,00 são aceitos** (o resultado é registrado, sem lançamento); BET, REFUND e
   ROLLBACK precisam de valor maior que zero.
 - **A BET não leva referência**: `referenceExternalTransactionId` numa BET é 400.
-- **Moeda**: só códigos ISO-4217 vigentes (`src/domain/money/iso-4217.ts`); fora da lista é 400; uma
-  moeda válida que não é a da wallet é `422 CURRENCY_MISMATCH`.
+- **Moeda**: só códigos ISO-4217 vigentes **de moeda corrente** (`src/domain/money/iso-4217.ts`);
+  fora da lista é 400. Ficam de fora, de propósito, os códigos ISO que não são moeda: `XXX` (nenhuma
+  moeda), `XTS` (testes), os metais `XAU`, `XAG`, `XPT`, `XPD`, o `XDR` e as unidades de conta
+  `XBA`–`XBD`, `XSU`, `XUA`; as moedas reais com X (`XAF`, `XOF`, `XPF`, `XCD`, `XCG`) ficam.
+  Uma moeda válida que não é a da wallet é `422 CURRENCY_MISMATCH`.
 - **Teto do saldo**: 16 dígitos inteiros, também no `initialBalance`; um crédito que passaria dele
   é `422 BALANCE_LIMIT_EXCEEDED`, gravado e auditável.
 - **O provedor `internal` é do sistema** (o da transação de abertura): `providerId` `internal` ou
@@ -650,7 +666,7 @@ passa pela mesma validação do comando.
 
 | Limitação | O que se sabe | Onde |
 | --- | --- | --- |
-| **Rajada maior que o pool** responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s, 19–52 respostas 503 em 150 requisições (tabela e `bun scripts/burst.ts` na seção 5.2); nenhum reenvio duplica | ADR-0007 |
+| **Rajada maior que o pool** responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s, 19–52 respostas 503 em 150 requisições numa máquina e 0–85 em outra (medidas, não garantia) (tabela e `bun scripts/burst.ts` na seção 5.2); nenhum reenvio duplica | ADR-0007 |
 | **Wallet quente** responde 503 sob pico | quem espera o lock segura uma conexão; refaça com `bun test test/concurrency/hot-wallet.test.ts` | ADR-0007 |
 | **Ordem dos eventos** entre publishers | não garantida; o `walletVersion` ordena | ADR-0012 |
 | **Saldo ↔ ledger no banco cobre o estado final** | a constraint diferida não confere a corrente inteira; um `balance_before` antigo errado continua sendo achado da reconciliação, que só detecta | ADR-0004 |
@@ -662,6 +678,28 @@ passa pela mesma validação do comando.
 | **Autenticação** | não implementada (desenho na seção 5.10) | ADR-0010 |
 | **`SIGTERM` real no Windows** | o teste real roda em Linux (CI e container); no Windows prova só a ligação | ADR-0011 |
 | **Ambiente de teste** | o banco de teste usa `synchronous_commit = off` (só por velocidade, nunca em produção); o compose não é um deploy de produção | README |
+| **Tabelas técnicas sem retenção** | `inbox_messages`, `outbox_messages` (as já publicadas) e `consumer_delivery_failures` só crescem; nenhuma limpeza roda hoje (abaixo) | ADR-0011, ADR-0012, ADR-0016 |
+
+**Retenção das tabelas técnicas (não implementada).** O ledger e as transações crescem de
+propósito: são o registro auditável. As três tabelas abaixo são técnicas, e cada linha só serve por
+um tempo limitado. Nada as limpa hoje; com volume real, elas precisam de uma limpeza periódica.
+
+| Tabela | Para que a linha serve | Até quando serve | Por que apagar depois é seguro |
+| --- | --- | --- | --- |
+| `inbox_messages` | reconhecer uma reentrega do mesmo `messageId` e pegar o mesmo `messageId` com outro payload | enquanto a mensagem pode ser entregue de novo: no máximo o `MessageRetentionPeriod` da fila (14 dias em `scripts/init-queues.sh`) | depois disso a mensagem não existe mais na fila; e mesmo uma reentrega tardia não duplica nada, porque a chave de idempotência em `wager_transactions` responde com replay |
+| `outbox_messages` publicadas (`published_at` preenchido) | histórico do envio | até alguém precisar investigar um envio | o evento já está na fila, o consumidor deduplica pelo `eventId`, e o fato de negócio está no ledger. As **não publicadas nunca são apagadas** |
+| `consumer_delivery_failures` | contar as falhas permanentes de uma entrega, para provar o `FAILED` (ADR-0016) | o mesmo prazo da inbox | sem a mensagem na fila não há mais entrega para decidir; um `FAILED` já gravado fica em `wager_transactions` |
+
+**Como se limparia:** um job periódico (o mesmo padrão dos workers, com `FOR UPDATE SKIP LOCKED` para
+rodar em várias réplicas), que apaga **em lotes** pequenos (por exemplo, 1.000 linhas por instrução),
+para não segurar locks nem gerar um pico de WAL. Por exemplo,
+`DELETE FROM inbox_messages WHERE ctid IN (SELECT ctid FROM inbox_messages WHERE received_at < now() - interval '15 days' LIMIT 1000)`.
+O mesmo vale para `consumer_delivery_failures` por `last_failed_at` e para `outbox_messages` por
+`published_at` (com `published_at IS NOT NULL`). O prazo da inbox e das falhas tem que ser maior que
+o `MessageRetentionPeriod` da fila, com folga; o da outbox é decisão de operação (30 dias seria
+razoável). Antes, um índice em `received_at`, `last_failed_at` e `published_at`, para a busca não
+varrer a tabela inteira. Alternativa com volume alto: particionar por mês e descartar a partição
+inteira.
 
 **Trabalho futuro, não aplicado:**
 

@@ -15,7 +15,7 @@ import type { MetricsPort } from '../../src/application/ports/metrics.port.js';
 import { MikroOrmOutboxRepository } from '../../src/infrastructure/persistence/repositories/mikro-orm-outbox.repository.js';
 import { MikroOrmInboxReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-inbox.reader.js';
 import { MikroOrmWagerTransactionReader } from '../../src/infrastructure/persistence/repositories/mikro-orm-wager-transaction.reader.js';
-import { ensureTestDatabase } from './database.js';
+import { TEST_CONNECTION_TIMEOUT_MS, ensureTestDatabase } from './database.js';
 
 export const brl = (amount: string) => Money.from({ amount, currency: 'BRL' });
 export const usd = (amount: string) => Money.from({ amount, currency: 'USD' });
@@ -53,11 +53,11 @@ export async function openPersistence(
     ...config,
     ...(options.clientUrl && { clientUrl: options.clientUrl }),
     ...(options.pool && { pool: options.pool }),
-    ...(options.connectionTimeoutMillis !== undefined && {
-      driverOptions: {
-        connectionTimeoutMillis: options.connectionTimeoutMillis,
-      },
-    }),
+    // Os testes de pool cheio pedem um prazo curto; os demais usam o da infraestrutura de teste.
+    driverOptions: {
+      connectionTimeoutMillis:
+        options.connectionTimeoutMillis ?? TEST_CONNECTION_TIMEOUT_MS,
+    },
     debug: ['query'],
     logger: (message: string) => queries.push(message),
   });

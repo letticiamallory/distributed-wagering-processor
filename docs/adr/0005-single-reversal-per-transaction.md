@@ -36,6 +36,14 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
     `test/integration/settled-without-reference.test.ts`. Um WIN que aponta para **outra** BET
     da rodada liquida aquela, não esta; um WIN de outro provedor numa rodada de mesmo nome não
     conta (o `roundId` é do provedor). O índice parcial `ix_wtx_round_wins` serve essa busca.
+  - **A ordem inversa também é fechada** (decisão de 27/11/2026, segunda avaliação). Se a BET da
+    rodada já foi devolvida (REFUND ou ROLLBACK `PROCESSED`) e DEPOIS chega um WIN da mesma wallet,
+    provedor e rodada **sem referência**, com valor maior que zero, ele é rejeitado com
+    `REFERENCE_ALREADY_REVERSED`: o mesmo código do WIN que aponta para a BET devolvida (regra irmã 1),
+    porque a situação é a mesma, e o provedor não precisa distinguir as duas. Um WIN de `0.00` continua
+    aceito (não paga nada). As duas ordens e uma corrida delas sob o lock estão em
+    `test/integration/win-after-reversed-round.test.ts`; o índice parcial `ix_wtx_round_bets` serve a
+    busca.
   - Só vale para REFUND e ROLLBACK de uma **BET**. Um ROLLBACK do próprio WIN, ou de um
     REFUND, não é bloqueado.
   - A política não consulta o banco: o caso de uso calcula `hasSettledWin` (existe WIN

@@ -99,10 +99,20 @@ distintas. Rajada de 150 requisições em 30 wallets distintas (5 BETs de 30,00 
 | 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
 | 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
 | 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+| 3 s (padrão), **outra máquina** ¹ | 0–85 | 5,1–6,2 s | 4,1–5,7 s | 0–2 |
+
+¹ Medido na segunda avaliação independente (27/11/2026, Windows 11 com Docker Desktop, outra
+máquina), com o mesmo `bun scripts/burst.ts`, 3 execuções: 0, 69 e 85 respostas 503; as 30 wallets
+terminaram certas em todas.
+
+**Estes números são medidas destas máquinas; não são uma propriedade do sistema.** Dependem do host, da
+carga do Docker e do que mais estiver rodando: na segunda avaliação a mesma configuração deu de 0 a 85
+respostas 503 e um p95 de até 5,7 s. O que o sistema garante é outra coisa: nenhum reenvio de um 503
+duplica um lançamento, e o 503 vem com `Retry-After`.
 
 Em todas as execuções as 30 wallets terminaram certas (10,00, consistentes com o ledger) depois do
-reenvio dos 503. A vazão é a mesma nos três: um timeout maior troca 503 por espera. O padrão é
-**3 s**: corta de 50% a 80% dos 503 de 1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido
+reenvio dos 503. A vazão é a mesma nos três valores: um timeout maior troca 503 por espera. O padrão é
+**3 s**: nas medições da tabela cortou de 50% a 80% dos 503 de 1 s, com o p95 perto de 5 s. 5 s não foi escolhido
 porque a espera pela conexão ficaria igual ao `lock_timeout` (5 s), e o pior caso de uma requisição
 dobraria para cerca de 10 s, o que tende a estourar o timeout do provedor e gerar reenvio de qualquer
 jeito. Refaça com:
