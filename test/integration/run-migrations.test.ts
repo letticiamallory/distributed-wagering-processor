@@ -65,6 +65,37 @@ const tablesOf = async (): Promise<string[]> => {
 };
 
 describe('run-migrations (the docker-compose `migrate` service)', () => {
+  test('a database that does not accept connections: retries with a log line per attempt, then gives up with exit != 0', async () => {
+    const unreachable = new URL(url.toString());
+    unreachable.port = '1'; // nada escuta ali
+    const child = Bun.spawn([process.execPath, ENTRYPOINT], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        DATABASE_URL: unreachable.toString(),
+        MIGRATE_CONNECT_DEADLINE_MS: '2500',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [out, code] = await Promise.all([
+      new Response(child.stdout as ReadableStream).text(),
+      child.exited,
+    ]);
+    const events = out
+      .trim()
+      .split('\n')
+      .filter((l) => l.startsWith('{'))
+      .map((l) => JSON.parse(l) as { event: string; attempt: number });
+    const failed = events.filter(
+      (e) => e.event === 'db_connect_attempt_failed',
+    );
+    expect(failed.length).toBeGreaterThanOrEqual(2);
+    expect(failed.map((e) => e.attempt)).toEqual(failed.map((_, i) => i + 1));
+    expect(events.at(-1)?.event).toBe('db_connect_gave_up');
+    expect(code).not.toBe(0);
+  }, 60_000);
+
   test('on a brand-new database it creates the whole schema and exits 0', async () => {
     expect(await tablesOf()).toEqual([]);
     const { out, err, code } = await run();

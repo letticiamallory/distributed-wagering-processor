@@ -31,9 +31,16 @@ O compose sobe, nesta ordem: o PostgreSQL (que também cria o banco de testes `w
 MiniStack, o `queues-init` (cria `wager-transactions.fifo`, a DLQ `wager-transactions-dlq.fifo` e
 `wallet-events.fifo`), o `migrate` (aplica o schema e termina) e a aplicação em
 `http://localhost:3000`, que já roda o consumidor SQS, o publisher da outbox e o worker de
-referências pendentes. Na primeira subida (volume vazio) o PostgreSQL leva perto de 1 minuto para
-inicializar; o healthcheck espera até 170 s, então o `--wait` pode demorar sem que nada esteja
-errado.
+referências pendentes.
+
+**Quanto demora a primeira vez.** Num clone limpo, o `docker compose up -d --wait` constrói as
+imagens e inicializa o volume: levou **cerca de 4 min 30 s** (Windows 11 com Docker Desktop, medido
+na segunda avaliação, 27/11/2026). Com as imagens já construídas e o volume vazio, **cerca de 1 min
+30 s**; com o volume já inicializado, menos de 1 minuto. Na primeira subida o PostgreSQL leva perto
+de 1 minuto para inicializar (o healthcheck espera até 170 s), e o `migrate` tolera um banco lento
+para aceitar conexão: tenta de novo com backoff por até 3 minutos (`MIGRATE_CONNECT_DEADLINE_MS`),
+com uma linha de log por tentativa (`db_connect_attempt_failed`). O `--wait` pode demorar sem que
+nada esteja errado.
 
 > **O MiniStack guarda as filas só em memória (não persiste nada).** Se o container `sqs` reiniciar,
 > as filas e as mensagens que estavam nelas somem, e o consumidor passa a logar
