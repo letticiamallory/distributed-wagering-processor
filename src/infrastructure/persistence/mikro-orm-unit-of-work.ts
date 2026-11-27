@@ -55,7 +55,7 @@ export class MikroOrmUnitOfWork extends UnitOfWork {
               tx.getTransactionContext(),
             );
           return work({
-            wallets: new MikroOrmWalletRepository(tx),
+            wallets: new MikroOrmWalletRepository(tx, this.metrics),
             transactions: new MikroOrmWagerTransactionRepository(tx),
             ledger: new MikroOrmLedgerRepository(tx),
             inbox: new MikroOrmInboxRepository(tx),

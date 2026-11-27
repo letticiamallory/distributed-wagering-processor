@@ -457,6 +457,7 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
 | `wager_retries_total{component}` | consumidor devolveu a mensagem; outbox reagendou o evento |
 | `wager_dlq_messages_total{reason}`, `consumer_messages_total{outcome}` | o consumidor |
 | `wager_db_unavailable_total{reason}` | o que vira 503: `pool_timeout`, `lock_timeout`, `deadlock`, `serialization`, `connection`, `other` |
+| `wallet_lock_wait_seconds{outcome}` | **espera pelo lock** da wallet (histograma, 1 ms a 5 s): `acquired` ou `timeout`. A disputa aparece aqui antes de virar 503; um p95 de centenas de ms aponta uma wallet quente |
 | `outbox_events_published_total`, `outbox_pending_messages`, `outbox_lag_seconds` | a outbox (as duas últimas são lidas **na raspagem**) |
 | `pending_reference_resolutions_total{outcome}`, `pending_reference_transactions` | o worker e a fila de pendentes |
 | `http_requests_total`, `http_request_duration_seconds` | tráfego (rota como **padrão**, nunca a URL; o resto é `unmatched`) |

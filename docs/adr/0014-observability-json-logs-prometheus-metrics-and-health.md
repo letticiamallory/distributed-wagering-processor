@@ -71,6 +71,7 @@ pequeno.
 | `wager_dlq_messages_total{reason}` | mensagens enviadas à DLQ, por motivo | consumidor |
 | `consumer_messages_total{outcome}` | acked, retried, dead_lettered | consumidor |
 | `wager_db_unavailable_total{reason}` | o que vira 503: `pool_timeout`, `lock_timeout`, `deadlock`, `serialization`, `connection`, `other` | UnitOfWork e leitores |
+| `wallet_lock_wait_seconds{outcome}` | espera pelo `SELECT ... FOR UPDATE` da wallet (histograma, `acquired` ou `timeout`): os conflitos de lock, não só os que estouram | repositório da wallet, pelo `UnitOfWork` |
 | `outbox_events_published_total` | eventos aceitos pelo broker | publisher |
 | `outbox_pending_messages`, `outbox_lag_seconds` | fila e idade do evento mais antigo | coletor, **na raspagem** |
 | `pending_reference_resolutions_total{outcome}` | resolved, still_pending, not_pending, failed | worker |

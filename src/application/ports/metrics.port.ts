@@ -18,6 +18,11 @@ const LATENCY_BUCKETS = [
   0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
 ] as const;
 
+// Espera pelo lock de uma wallet (1 ms a 5 s, o lock_timeout padrão).
+const LOCK_WAIT_BUCKETS = [
+  0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+] as const;
+
 export const METRICS = {
   // ---- transações
   wager_transactions_total: {
@@ -40,6 +45,12 @@ export const METRICS = {
     help: 'Time to process one transaction request, from the use case entry to its result',
     labels: ['channel', 'outcome'],
     buckets: LATENCY_BUCKETS,
+  },
+  wallet_lock_wait_seconds: {
+    type: 'histogram',
+    help: 'Time waiting for the row lock of a wallet (SELECT ... FOR UPDATE), by outcome: acquired or timeout (lock_timeout)',
+    labels: ['outcome'],
+    buckets: LOCK_WAIT_BUCKETS,
   },
   pending_reference_resolutions_total: {
     type: 'counter',
