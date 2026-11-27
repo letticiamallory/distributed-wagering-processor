@@ -27,11 +27,20 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
     `0.00` não liquida a BET (decisão de 26/11/2026): não paga nada, e um WIN de `0.00` nem pode
     ser revertido (o ROLLBACK exige valor maior que zero), então contá-lo travaria a BET para
     sempre sem que o jogador tivesse prêmio algum. Um WIN de `0.01` já liquida.
+  - **O WIN sem referência também liquida** (decisão de 27/11/2026, achado de avaliação). O
+    enunciado diz que o WIN "pode" referenciar a BET; quando não referencia, um WIN `PROCESSED` de
+    valor maior que zero da **mesma wallet, do mesmo provedor e da mesma rodada** (`roundId`)
+    liquida a BET do mesmo jeito. Antes só contava o WIN que apontava para ela, e o cenário
+    BET 10,00 → WIN 30,00 sem referência → REFUND da BET passava: o jogador terminava com 130,00
+    numa wallet de 100,00 (o prêmio e a aposta de volta). Teste:
+    `test/integration/settled-without-reference.test.ts`. Um WIN que aponta para **outra** BET
+    da rodada liquida aquela, não esta; um WIN de outro provedor numa rodada de mesmo nome não
+    conta (o `roundId` é do provedor). O índice parcial `ix_wtx_round_wins` serve essa busca.
   - Só vale para REFUND e ROLLBACK de uma **BET**. Um ROLLBACK do próprio WIN, ou de um
     REFUND, não é bloqueado.
   - A política não consulta o banco: o caso de uso calcula `hasSettledWin` (existe WIN
-    `PROCESSED` de valor maior que zero com `reference_transaction_id` = BET e sem reversão
-    `PROCESSED` apontando para esse WIN), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
+    `PROCESSED` de valor maior que zero, sem reversão `PROCESSED` apontando para esse WIN, e com
+    `reference_transaction_id` = BET ou, sem referência, da mesma wallet, provedor e rodada), do mesmo modo que calcula `alreadyReversed`. Na ordem das regras, vem logo
     depois de `REFERENCE_ALREADY_REVERSED` e antes da checagem de saldo. O código é de
     negócio, não retentável: o provedor desiste ou reverte o WIN primeiro.
 - **Vários WINs para a mesma BET são permitidos** (decisão de 26/11/2026). Há jogos que

@@ -398,24 +398,24 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
     return { wallet, bet, win };
   }
 
-  const settled = (betId: string) =>
-    db().uow.run(async (r) => r.transactions.hasSettledWin(betId));
+  const settled = (bet: WagerTransaction) =>
+    db().uow.run(async (r) => r.transactions.hasSettledWin(bet));
 
   test('false for a BET with no WIN', async () => {
     const wallet = await walletInDb();
     const bet = processed(newTransaction(wallet));
     await insert(bet);
-    expect(await settled(bet.id)).toBe(false);
+    expect(await settled(bet)).toBe(false);
   });
 
   test('true for a BET with a PROCESSED WIN that was not reversed', async () => {
     const { bet } = await betWithWin();
-    expect(await settled(bet.id)).toBe(true);
+    expect(await settled(bet)).toBe(true);
   });
 
   test('false when the WIN was REJECTED: nothing was paid', async () => {
     const { bet } = await betWithWin('rejected');
-    expect(await settled(bet.id)).toBe(false);
+    expect(await settled(bet)).toBe(false);
   });
 
   test('false once the WIN was reversed (ROLLBACK of the WIN PROCESSED)', async () => {
@@ -430,7 +430,7 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
         win.id,
       ),
     );
-    expect(await settled(bet.id)).toBe(false);
+    expect(await settled(bet)).toBe(false);
   });
 
   test('still true when the reversal of the WIN was REJECTED', async () => {
@@ -442,17 +442,17 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
     });
     rejected.reject(FailureCode.ReversalInsufficientFunds, brl('0.00'));
     await insert(rejected);
-    expect(await settled(bet.id)).toBe(true);
+    expect(await settled(bet)).toBe(true);
   });
 
   test('a WIN of 0.00 pays nothing, so it does not settle the BET (settled = the player got money)', async () => {
     const { bet } = await betWithWin('processed', '0.00');
-    expect(await settled(bet.id)).toBe(false);
+    expect(await settled(bet)).toBe(false);
   });
 
   test('a WIN of 0.01 already settles the BET', async () => {
     const { bet } = await betWithWin('processed', '0.01');
-    expect(await settled(bet.id)).toBe(true);
+    expect(await settled(bet)).toBe(true);
   });
 
   test('a BET with a WIN of 0.00 AND a WIN of 10.00 is settled (the paying one counts)', async () => {
@@ -464,7 +464,7 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
     });
     processed(paying, bet.id);
     await insert(paying);
-    expect(await settled(bet.id)).toBe(true);
+    expect(await settled(bet)).toBe(true);
   });
 
   test('a LOSS never settles a BET (BET + LOSS + REFUND is zero)', async () => {
@@ -481,14 +481,14 @@ describe('WagerTransactionRepository: hasSettledWin (ADR-0005, sister rule 2)', 
         bet.id,
       ),
     );
-    expect(await settled(bet.id)).toBe(false);
+    expect(await settled(bet)).toBe(false);
   });
 
   test('a WIN of another BET does not settle this one', async () => {
     const { wallet } = await betWithWin();
     const other = processed(newTransaction(wallet));
     await insert(other);
-    expect(await settled(other.id)).toBe(false);
+    expect(await settled(other)).toBe(false);
   });
 });
 

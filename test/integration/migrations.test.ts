@@ -81,7 +81,7 @@ const INSERT_PENDING_REFERENCE = `
   VALUES (?, 'p', ?, ?, ?, ?, ?, 'r', 'g', 'REFUND', '10.00', 'BRL', 'PENDING_REFERENCE',
      'ext', 1, now(), 'c')`;
 
-test('the latest migration (PENDING only on INSERT) goes down one step and up again', async () => {
+test('the PENDING-only-on-INSERT migration goes down (with the ones after it) and up again', async () => {
   await orm.migrator.up();
   const connection = orm.em.getConnection();
   const walletId = crypto.randomUUID();
@@ -118,8 +118,9 @@ test('the latest migration (PENDING only on INSERT) goes down one step and up ag
     'cannot be updated to PENDING',
   );
 
-  // down de UMA migration: a regra some, o resto continua (a função existe, o trigger vale).
-  await orm.migrator.down();
+  // down até a migration ANTERIOR a ela (desfaz ela e as mais novas, que são só índices): a regra
+  // some, o resto continua (a função existe, o trigger vale).
+  await orm.migrator.down({ to: 'Migration20261126011328_wtx_lookup_indexes' });
   expect((await schemaObjects()).functions).toEqual(FUNCTIONS);
   const id = await newPending();
   expect(await outcomeOfToPending(id)).toBe('accepted'); // como antes da migration

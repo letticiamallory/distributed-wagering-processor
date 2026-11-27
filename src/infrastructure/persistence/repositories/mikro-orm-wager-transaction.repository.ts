@@ -67,15 +67,24 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
     return count > 0;
   }
 
-  // WIN PROCESSED que aponta para a BET, que PAGOU alguma coisa (valor > 0) e que ninguém
-  // reverteu com sucesso. "Liquidada" quer dizer que o jogador recebeu dinheiro: um WIN
-  // REJECTED não pagou nada, um WIN revertido devolveu o prêmio, e um WIN de 0.00 (como a
+  // WIN PROCESSED que PAGOU alguma coisa (valor > 0), que ninguém reverteu com sucesso, e que é
+  // desta BET: aponta para ela, OU não aponta para nada e é da mesma wallet, do mesmo provedor e
+  // da mesma rodada (o enunciado diz que o WIN "pode" referenciar a BET; sem isso, um WIN sem
+  // referência deixava devolver a aposta e o jogador ficava com os dois). Um WIN que aponta para
+  // OUTRA BET liquida aquela, não esta. "Liquidada" quer dizer que o jogador recebeu dinheiro: um
+  // WIN REJECTED não pagou nada, um WIN revertido devolveu o prêmio, e um WIN de 0.00 (como a
   // LOSS) nunca pagou; nesses casos a BET pode ser revertida (ADR-0005).
-  async hasSettledWin(betTransactionId: string): Promise<boolean> {
+  async hasSettledWin(
+    bet: Pick<WagerTransaction, 'id' | 'walletId' | 'providerId' | 'roundId'>,
+  ): Promise<boolean> {
     const rows = (await this.em.getConnection().execute(
       `SELECT EXISTS (
            SELECT 1 FROM wager_transactions win
-           WHERE win.reference_transaction_id = ?
+           WHERE (win.reference_transaction_id = ?
+                  OR (win.reference_transaction_id IS NULL
+                      AND win.wallet_id = ?
+                      AND win.provider_id = ?
+                      AND win.round_id = ?))
              AND win.kind = 'WIN' AND win.status = 'PROCESSED'
              AND win.amount > 0
              AND NOT EXISTS (
@@ -85,7 +94,7 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
                  AND reversal.kind IN ('REFUND', 'ROLLBACK')
              )
          ) AS settled`,
-      [betTransactionId],
+      [bet.id, bet.walletId, bet.providerId, bet.roundId],
       'all',
       this.em.getTransactionContext(),
     )) as Array<{ settled: boolean }>;

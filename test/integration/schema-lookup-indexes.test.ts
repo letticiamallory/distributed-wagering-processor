@@ -34,3 +34,16 @@ describe('migration 5: lookup indexes on wager_transactions', () => {
     expect(def).not.toContain('UNIQUE');
   });
 });
+
+describe('migration 7: the WINs of a round, for REFERENCE_SETTLED without a reference', () => {
+  test('ix_wtx_round_wins serves "does this round have a paid WIN without reference"', async () => {
+    const def = await indexDefinition('ix_wtx_round_wins');
+    expect(def).toBeDefined();
+    expect(def).toContain('(wallet_id, provider_id, round_id)');
+    // Parcial: só os WINs PROCESSED sem referência entram (os com referência usam o índice acima).
+    expect(def).toContain("kind = 'WIN'::text");
+    expect(def).toContain("status = 'PROCESSED'::text");
+    expect(def).toContain('reference_transaction_id IS NULL');
+    expect(def).not.toContain('UNIQUE');
+  });
+});

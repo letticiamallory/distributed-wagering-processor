@@ -22,8 +22,11 @@ export abstract class WagerTransactionRepository extends WagerTransactionReader 
   // Existe uma reversão (REFUND ou ROLLBACK) PROCESSED apontando para esta transação?
   abstract hasProcessedReversal(transactionId: string): Promise<boolean>;
 
-  // Esta BET tem um WIN PROCESSED apontando para ela, sem reversão PROCESSED desse WIN?
-  abstract hasSettledWin(betTransactionId: string): Promise<boolean>;
+  // Esta BET já pagou prêmio? Um WIN PROCESSED com valor > 0, sem reversão PROCESSED, que aponta
+  // para ela OU que não aponta para nada e é da mesma wallet, provedor e rodada (ADR-0005).
+  abstract hasSettledWin(
+    bet: Pick<WagerTransaction, 'id' | 'walletId' | 'providerId' | 'roundId'>,
+  ): Promise<boolean>;
 
   // Grava o novo estado de uma transação que ESTAVA em PENDING_REFERENCE (outra tentativa, ou o
   // estado final). Só as colunas que mudam com o estado; o que o provedor mandou nunca é

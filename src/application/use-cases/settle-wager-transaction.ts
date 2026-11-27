@@ -51,7 +51,7 @@ export async function settleWagerTransaction(
   const hasSettledWin =
     transaction.requiresReference() &&
     reference?.kind === WagerTransactionKind.Bet
-      ? await repositories.transactions.hasSettledWin(reference.id)
+      ? await repositories.transactions.hasSettledWin(reference)
       : false;
 
   const decision = WagerPolicy.decide({
