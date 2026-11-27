@@ -129,7 +129,7 @@ processos da suíte de concorrência não a consomem.
   o que fazer; o `warn` com os ids dá o mesmo rastro.
 - **`maxReceiveCount` 5**: só 60 s de espera total.
 - **Processar o lote em paralelo sem agrupar por grupo**: mais vazão, mas disputa o lock da mesma
-  wallet e prende conexões do pool (o limite medido na suíte de concorrência, ADR-0007).
+  wallet e prende conexões do pool (o limite da wallet quente, ADR-0007; refaça com `bun test test/concurrency/hot-wallet.test.ts`).
 
 ## Consequências
 + Ack só depois do commit; reentrega vira replay; permanentes saem da frente na 1ª entrega, com

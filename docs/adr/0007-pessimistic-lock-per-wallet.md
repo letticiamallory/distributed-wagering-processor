@@ -82,7 +82,7 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 − Operações na mesma wallet são serializadas. É o comportamento desejado, mas o limite de
   vazão de uma wallet muito quente é o de uma transação por vez.
 − O 503 por `lock_timeout` é contado por causa em `wager_db_unavailable_total{reason}` (ADR-0014),
-  e o limite de 5 s pode ser ajustado com medição (`DB_LOCK_TIMEOUT_MS`).
+  e o limite de 5 s pode ser ajustado (`DB_LOCK_TIMEOUT_MS`).
 − Escrever `INSERT` e `UPDATE` à mão tira do MikroORM o rastreamento de mudanças: cada
   gravação nova é um método do repositório, com teste contra o Postgres real.
 
@@ -90,8 +90,9 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**. Numa hot wallet as
 operações são processadas uma por vez, mas cada requisição na fila ocupa uma das 20 conexões do
 processo; quando elas se esgotam, as seguintes esperam no máximo 1 s por uma conexão livre e levam
-**503 com `Retry-After`**. Medido com 290 requisições simultâneas na mesma wallet (1 processo e 3
-processos): de 240 a 530 respostas 503, **100% por pool sem conexão e nenhuma por `lock_timeout`**.
+**503 com `Retry-After`**. Com 290 requisições simultâneas na mesma wallet (1 processo e 3
+processos): de 240 a 530 respostas 503 (medido durante o desenvolvimento (26/11/2026, Windows 11 com
+Docker Desktop, Bun 1.4.5); uma execução se refaz com `bun test test/concurrency/hot-wallet.test.ts`), **100% por pool sem conexão e nenhuma por `lock_timeout`**.
 Todo reenvio com a mesma `Idempotency-Key` foi seguro (uma linha por chave, saldo e ledger batendo).
 
 Isto **não é um defeito**: é o controle de admissão funcionando, recusando com segurança em vez de

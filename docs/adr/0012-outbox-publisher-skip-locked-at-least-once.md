@@ -44,7 +44,7 @@ Dois publishers nunca recebem a mesma linha: o segundo **pula** as travadas e pe
 sem esperar (há um teste com um publisher parado segurando 3 linhas). O custo aceito é a conexão
 presa durante o envio; por isso o cliente SQS tem prazo de 5 s (`OUTBOX_SEND_TIMEOUT_MS`) e poucas
 tentativas internas. **O lease fica como evolução** se a latência do SQS crescer a ponto de a
-conexão presa pesar (a suíte de concorrência mediu que conexões presas esgotam o pool, ADR-0007).
+conexão presa pesar (conexões presas esgotam o pool, como mostra `bun test test/concurrency/hot-wallet.test.ts`, ADR-0007).
 
 ### 3. At-least-once e quem deduplica
 - O processo morre **antes do `COMMIT`** (inclusive depois do SQS aceitar o lote): a transação

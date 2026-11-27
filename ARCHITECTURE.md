@@ -5,7 +5,12 @@ com os números que foram medidos. Cada decisão tem um ADR próprio em [docs/ad
 aqui está o quadro todo. Para subir e avaliar em 5 minutos, veja o [README](README.md).
 
 Regra deste documento: só entra o que foi **medido** ou **testado**. Onde algo é desenho e não está
-implementado (a autenticação, a fila por wallet), a seção diz isso na primeira linha.
+implementado (a autenticação, a fila por wallet), a seção diz isso na primeira linha. Todo número
+diz como refazê-lo: com um comando do repositório (`bun run test:concurrency` imprime uma linha
+`[concurrency]` por cenário, com requisições, 503, tempo e invariantes), ou, quando não há comando
+(as sabotagens, feitas editando o código à mão), com a marca "medido durante o desenvolvimento
+(26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5)". Os números marcados assim variam de máquina
+para máquina.
 
 - [1. Arquitetura hexagonal e fronteiras](#1-arquitetura-hexagonal-e-fronteiras)
 - [2. Concorrência: o saldo nunca fica negativo](#2-concorrência-o-saldo-nunca-fica-negativo)
@@ -94,6 +99,9 @@ O `lock_timeout` é de 5 s (`DB_LOCK_TIMEOUT_MS`): estourou, é falha **transit�
 
 Cada linha é uma **sabotagem**: tirei a proteção do código, rodei a suíte de concorrência e
 registrei o que quebrou. O objetivo é provar que os testes realmente enxergam cada defesa.
+Os números da tabela: medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop,
+Bun 1.4.5), editando o código à mão. Não há script no repositório que refaça as sabotagens; o que dá
+para refazer é a suíte com o código certo (`bun run test:concurrency`).
 
 | Sabotagem | Testes que falham | Sintoma |
 | --- | --- | --- |
@@ -109,9 +117,10 @@ só removendo as três (d) aparece corrupção. Por isso o teste 4 ("wallets dif
 
 ### Cargas da suíte de concorrência
 
-`bun run test:concurrency` (3 execuções seguidas, todas verdes: 86 s, 82 s e 69 s; 17 cenários e
-um **check global** que reconstrói o ledger de todas as wallets criadas, 775 na medição, 0
-violações). Alguns cenários: a mesma BET 50 vezes ao mesmo tempo (10 rodadas, 500 requisições,
+`bun run test:concurrency` (17 cenários na época e um **check global** que reconstrói o ledger de
+todas as wallets criadas; 3 execuções seguidas, todas verdes, em 86 s, 82 s e 69 s, com 775 wallets
+no check global e 0 violações: medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+Desktop, Bun 1.4.5)). Os números de cada execução saem nas linhas `[concurrency]` da própria suíte. Alguns cenários: a mesma BET 50 vezes ao mesmo tempo (10 rodadas, 500 requisições,
 0 falhas de 503); 100 wallets × 2 BETs; 50 wallets em paralelo; **3 processos** da aplicação sobre
 o mesmo banco (200 requisições, 67/67/66 por processo, 0 503). A suíte atual tem 18 cenários
 (entrou o dos 3 publishers).
@@ -123,15 +132,18 @@ quente as operações saem uma por vez, mas cada requisição na fila ocupa uma 
 processo (`DB_POOL_MAX`); quando acabam, as seguintes esperam no máximo 1 s por uma conexão
 (`DB_ACQUIRE_TIMEOUT_MS`) e levam **503 com `Retry-After`**.
 
-- Medido com **290 requisições simultâneas** na mesma wallet: de 154 a 343 respostas 503 com 1
-  processo; com 3 processos, de 228 a 535 (execuções medidas depois da instrumentação).
+- **290 requisições simultâneas** na mesma wallet: de 154 a 343 respostas 503 com 1 processo; com
+  3 processos, de 228 a 535 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+  Desktop, Bun 1.4.5), várias execuções). Uma execução se refaz com
+  `bun test test/concurrency/hot-wallet.test.ts` (1 processo) e
+  `bun test test/concurrency/multi-instance.test.ts` (3 processos): a linha `[concurrency]` traz
+  `status503` e `reasons503`.
 - **100% das causas foram "pool sem conexão" e 0 foram `lock_timeout`** (em todas as execuções).
 - Todo reenvio com a mesma `Idempotency-Key` foi seguro: uma linha por chave, saldo e ledger
   batendo.
-- Os extremos vistos antes da instrumentação (1143 e 1408 respostas 503, 21–23 s) **não
-  reproduziram** nas execuções medidas depois. A explicação plausível (a velocidade da máquina:
-  Docker e Postgres no Windows, 3 processos Bun e o runner disputando CPU) **não foi provada**.
-- Jitter no reenvio do cliente (3 execuções por modo, intercaladas): com 3 processos, o jitter
+- Jitter no reenvio do cliente (3 execuções por modo, intercaladas; medido durante o
+  desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5); o modo se escolhe com
+  `CLIENT_RETRY_JITTER=wide bun test test/concurrency/multi-instance.test.ts`, ou `none`/`narrow`): com 3 processos, o jitter
   largo corta os 503 em cerca de 25–30% (228–260 contra 294–400), mas **o tempo total não
   melhora**; com 1 processo o corte está dentro do ruído.
 
@@ -326,9 +338,11 @@ rodam ao mesmo tempo sem pegar a mesma linha.
   reenviado. **Quem consome eventos deduplica pelo `eventId`** (contrato); a deduplicação do FIFO (`MessageDeduplicationId = eventId`, janela de 5 min) é só otimização.
 - **Evento preso:** sem DLQ, *retry* infinito com backoff; a partir de 10 tentativas o log sobe
   para `error` (`OUTBOX_STUCK_ATTEMPTS`).
-- **Medido (3 processos, 3 publishers, 30 wallets × 8 apostas):** 510 eventos gerados, 510
-  mensagens entregues, **0 duplicatas** entregues, 240 requisições, 0 respostas 503, 5,7 s,
-  versões 1..9 completas por wallet.
+- **3 processos, 3 publishers, 30 wallets × 8 apostas** (refaça com
+  `bun test test/concurrency/outbox-publishers.test.ts`): 510 eventos gerados, 510 mensagens
+  entregues, **0 duplicatas** entregues, 240 requisições, 0 respostas 503, versões 1..9 completas por
+  wallet. O tempo (5,7 s) foi medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
+  Desktop, Bun 1.4.5).
 - **Ordem:** a ordem por wallet **não** é garantida entre publishers nem em falha parcial por
   entrada do `SendMessageBatch` (o SQS pode aceitar os seguintes); o `walletVersion` do evento
   ordena. Criar uma wallet grava 1 evento de abertura (`WalletBalanceChanged`), então os eventos
@@ -373,7 +387,8 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
 - **Roda em `REPEATABLE READ` e `READ ONLY`, sem lock.** O `REPEATABLE READ` dá uma **foto única**
   do banco: o saldo e a soma do ledger são lidos no mesmo instante. Em `READ COMMITTED`, uma
   aposta que commitasse entre as duas leituras faria a conferência acusar uma divergência que não
-  existe (a sabotagem provou isso com escritores concorrentes). O `READ ONLY` faz o banco recusar
+  existe (uma sabotagem mostrou isso com escritores concorrentes: medido durante o desenvolvimento
+  (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5), editando o código). O `READ ONLY` faz o banco recusar
   qualquer escrita nessa transação (também sabotado), e sem lock a conferência **nunca atrasa uma
   aposta**.
 - A diferença sai do próprio banco, em `NUMERIC` (a aplicação não faz conta de dinheiro) e pode
@@ -421,7 +436,7 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
   balanceador parar de mandar tráfego. Há testes que derrubam um PostgreSQL e um MiniStack
   **reais** (containers descartáveis) e veem o 503 e depois o 200.
 - `/health` e `/metrics` são **abertos** (enunciado, seção 9).
-- **Sabotagens do consumidor, da outbox e do worker, da observabilidade e das consultas** (todas com SHA-256 idêntico antes e depois do experimento):
+- **Sabotagens do consumidor, da outbox e do worker, da observabilidade e das consultas** (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5), editando o código à mão e conferindo o SHA-256 dos arquivos antes e depois; não há script que as refaça):
   consumidor, 10 variantes (apagar antes do commit derrubou 15 testes; sem inbox derrubou 4, e
   note que **o débito não duplica**, porque a chave de idempotência cobre: quem acusa é a linha da
   inbox); outbox e worker, 10 (sem `SKIP LOCKED` derrubou 6); observabilidade, 15 (log que vaza o
@@ -467,7 +482,7 @@ mesma validação do comando.
 
 | Limitação | O que se sabe | Onde |
 | --- | --- | --- |
-| **Wallet quente** responde 503 sob pico | 290 requisições simultâneas na mesma wallet: 154–343 respostas 503 com 1 processo, 228–535 com 3; **100% por pool sem conexão, 0 por `lock_timeout`**; nenhum reenvio duplicou. Correção estrutural (fila por wallet antes da conexão) **não aplicada** | seção 2, ADR-0007 |
+| **Wallet quente** responde 503 sob pico | 290 requisições simultâneas na mesma wallet: 154–343 respostas 503 com 1 processo, 228–535 com 3 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5); uma execução: `bun test test/concurrency/hot-wallet.test.ts`); **100% por pool sem conexão, 0 por `lock_timeout`**; nenhum reenvio duplicou. Correção estrutural (fila por wallet antes da conexão) **não aplicada** | seção 2, ADR-0007 |
 | **Ordem dos eventos** entre publishers | não garantida; o `walletVersion` ordena. Em falha parcial do `SendMessageBatch` o SQS pode aceitar entradas seguintes | seção 6.2, ADR-0012 |
 | **Métricas por processo** | cada instância expõe o próprio `/metrics`; somar entre réplicas é com o Prometheus | seção 8 |
 | **Saldo ↔ ledger só confere sob demanda** | a constraint diferida no banco **não foi implementada**; a reconciliação detecta, não impede, e não há varredura global | seção 7, ADR-0004 |
