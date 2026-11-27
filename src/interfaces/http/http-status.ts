@@ -55,6 +55,7 @@ const ERROR_STATUS: Record<ApiErrorCode, number> = {
   [FailureCode.AmountMismatch]: 422,
   [FailureCode.ReferenceAlreadyReversed]: 422,
   [FailureCode.ReferenceSettled]: 422,
+  [FailureCode.BalanceLimitExceeded]: 422,
   // 503 e 500
   [FailureCode.DependencyUnavailable]: 503,
   [ApiOnlyErrorCode.InternalError]: 500,

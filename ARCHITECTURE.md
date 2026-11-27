@@ -203,7 +203,7 @@ hash (testado). **O hash é parte do contrato**: mudar campo, ordem ou algoritmo
 
 (ADR-0009; `src/domain/errors/failure-code.ts`)
 
-São **18 códigos** de domínio, em 4 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
+São **19 códigos** de domínio, em 4 categorias. **Só `DEPENDENCY_UNAVAILABLE` é reenviável**; nos
 outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 
 | Categoria | Código | HTTP | O que significa | O que o provedor faz |
@@ -225,9 +225,10 @@ outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 | negócio | `AMOUNT_MISMATCH` | 422 | o valor da reversão difere do da referência | **desistir** |
 | negócio | `REFERENCE_ALREADY_REVERSED` | 422 | a referência já foi revertida (ADR-0005: uma reversão, de qualquer tipo) | **desistir** |
 | negócio | `REFERENCE_SETTLED` | 422 | reverter uma BET que já pagou prêmio deixaria o jogador com os dois | **desistir** (reverta o WIN antes) |
+| negócio | `BALANCE_LIMIT_EXCEEDED` | 422 | o crédito (WIN, REFUND, ROLLBACK de BET) passaria do teto de 16 dígitos inteiros do saldo (`9999999999999999.99`); o mesmo teto vale para o `initialBalance` (ADR-0006) | **desistir**; uma nova operação só depois de o saldo baixar |
 | transitório | `DEPENDENCY_UNAVAILABLE` | **503** + `Retry-After` | banco fora, pool cheio, `lock_timeout`, deadlock | **reenviar a mesma chave** depois do `Retry-After`; nada foi gravado |
 
-Além dos 18, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
+Além dos 19, a API tem códigos que **não** são de transação: `WALLET_ALREADY_EXISTS` (409),
 `TRANSACTION_NOT_FOUND` (404), `INTERNAL_ERROR` (500), `UNAUTHENTICATED` (401) e
 `PROVIDER_FORBIDDEN` (403). O mapa é uma tabela **total** sobre todos eles
 (`Record<ApiErrorCode, number>`): um código novo não compila sem um status.

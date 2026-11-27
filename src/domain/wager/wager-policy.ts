@@ -145,6 +145,13 @@ export class WagerPolicy {
           : FailureCode.InsufficientFunds,
       );
     }
+    // O espelho do saldo insuficiente: um crédito que passaria do teto do Money.
+    if (
+      direction === LedgerDirection.Credit &&
+      !wallet.canCredit(transaction.money)
+    ) {
+      return reject(FailureCode.BalanceLimitExceeded);
+    }
     return { type: 'apply', direction };
   }
 }

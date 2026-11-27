@@ -16,8 +16,9 @@ describe('FailureCode taxonomy', () => {
     }
   });
 
-  test('has the 18 codes of the taxonomy, including REFERENCE_SETTLED', () => {
-    expect(allCodes).toHaveLength(18);
+  test('has the 19 codes of the taxonomy, including REFERENCE_SETTLED and BALANCE_LIMIT_EXCEEDED', () => {
+    expect(allCodes).toHaveLength(19);
+    expect(allCodes).toContain(FailureCode.BalanceLimitExceeded);
     expect(allCodes).toContain(FailureCode.ReferenceSettled);
   });
 

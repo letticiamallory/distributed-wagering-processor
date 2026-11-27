@@ -114,6 +114,35 @@ const reject = (code: FailureCode): PolicyDecision => ({
 });
 const wait: PolicyDecision = { type: 'waitForReference' };
 
+describe('WagerPolicy: a credit above the Money ceiling', () => {
+  const full = () => walletWith('9999999999999999.99');
+
+  test('WIN that would pass the ceiling is BALANCE_LIMIT_EXCEEDED (not an exception)', () => {
+    expect(
+      decide({
+        transaction: make({ kind: K.Win, money: brl('0.01') }),
+        wallet: full(),
+      }),
+    ).toEqual(reject(F.BalanceLimitExceeded));
+  });
+
+  test('REFUND that would pass the ceiling is BALANCE_LIMIT_EXCEEDED', () => {
+    expect(
+      decide({
+        transaction: pointing(K.Refund),
+        reference: bet(),
+        wallet: full(),
+      }),
+    ).toEqual(reject(F.BalanceLimitExceeded));
+  });
+
+  test('a BET on a full wallet is still allowed (it lowers the balance)', () => {
+    expect(decide({ transaction: make(), wallet: full() })).toEqual(
+      apply(LedgerDirection.Debit),
+    );
+  });
+});
+
 describe('WagerPolicy: transactions without a reference', () => {
   test('BET with enough balance debits', () => {
     expect(decide({ transaction: make() })).toEqual(

@@ -202,6 +202,19 @@ describe('Wallet.canDebit', () => {
   });
 });
 
+describe('Wallet.canCredit', () => {
+  test('is true up to and including the Money ceiling, false above (instead of throwing)', () => {
+    const { wallet } = openWallet(brl('9999999999999998.99'));
+    expect(wallet.canCredit(brl('1.00'))).toBe(true);
+    expect(wallet.canCredit(brl('1.01'))).toBe(false);
+  });
+
+  test('throws on another currency instead of answering "over the limit"', () => {
+    const { wallet } = openWallet();
+    expectWalletCurrencyMismatch(() => wallet.canCredit(usd('1.00')));
+  });
+});
+
 describe('Wallet.rehydrate', () => {
   test('rebuilds the persisted state as it is', () => {
     const wallet = Wallet.rehydrate({

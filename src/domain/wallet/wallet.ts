@@ -1,4 +1,7 @@
-import { CurrencyMismatchError } from '../money/money.errors.js';
+import {
+  CurrencyMismatchError,
+  MoneyOverflowError,
+} from '../money/money.errors.js';
 import { Money } from '../money/money.js';
 import { LedgerDirection } from './ledger-direction.js';
 import {
@@ -119,6 +122,22 @@ export class Wallet {
     this.assertSameCurrency(money);
     this.assertPositive(money);
     return !this._balance.subtract(money).isNegative();
+  }
+
+  // O crédito caberia no teto do Money (16 dígitos inteiros)? Responde em vez de lançar: a política
+  // transforma o "não" em BALANCE_LIMIT_EXCEEDED, uma rejeição auditável (e não um 500).
+  canCredit(money: Money): boolean {
+    this.assertSameCurrency(money);
+    this.assertPositive(money);
+    try {
+      this._balance.add(money);
+      return true;
+    } catch (error) {
+      if (error instanceof MoneyOverflowError) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   debit(props: MovementProps): WalletLedgerEntry {
