@@ -101,6 +101,7 @@ export class ListLedgerUseCase {
         ? undefined
         : decodeLedgerCursor(
             typeof input.cursor === 'string' ? input.cursor : '',
+            walletId,
           );
 
     if (!(await this.wallets.findById(walletId))) {
@@ -116,7 +117,9 @@ export class ListLedgerUseCase {
     return {
       items,
       nextCursor:
-        hasNext && last ? encodeLedgerCursor(last.walletVersion) : null,
+        hasNext && last
+          ? encodeLedgerCursor(walletId, last.walletVersion)
+          : null,
     };
   }
 }

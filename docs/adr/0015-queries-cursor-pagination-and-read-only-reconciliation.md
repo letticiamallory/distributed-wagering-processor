@@ -39,12 +39,20 @@ resposta, nunca corrigida em silêncio**.
   novos** (eles entram do lado de cima): nenhuma entrada aparece duas vezes nem some entre páginas.
   Com OFFSET, três lançamentos novos empurrariam três velhos para a página seguinte. Há um teste com
   lançamentos chegando entre duas páginas.
-- **Opaco e versionado:** `base64url(JSON { v: 1, walletVersion })`. O cliente só devolve o que
+- **Opaco, versionado e preso à wallet:** `base64url(JSON { v: 2, walletId, walletVersion })`. Um
+  cursor de **outra wallet**, ou do formato antigo (`v: 1`, sem `walletId`), é 400: antes, um cursor
+  emitido para a wallet A funcionava na wallet B (achado de avaliação). O cliente só devolve o que
   recebeu; se o formato mudar, sobe o `v` e os cursores antigos viram 400 em vez de uma página
   errada. Cursor inválido (lixo, JSON que não é objeto, `v` desconhecido, versão não inteira, zero,
   negativa ou maior que o INTEGER do Postgres, texto longo demais) é **400 que nomeia o campo
   `cursor` e nunca repete o que veio**.
 - `limit`: padrão **50**, máximo **100**; fora disso (0, negativo, fracionário, texto) é 400.
+- **Sem assinatura, de propósito (evolução possível: HMAC).** O cursor pode ser montado à mão para a
+  própria wallet. Assinar com HMAC impediria isso, mas exigiria um segredo compartilhado entre as
+  instâncias, isto é, uma variável obrigatória a mais, e uma variável obrigatória que falta é um
+  risco no primeiro boot de quem avalia. E forjar um cursor da própria wallet não expõe nada que o
+  extrato já não mostre: o pior resultado é uma página que começa numa versão escolhida. Se o cursor
+  passar a carregar algo que o cliente não pode ver ou escolher, a assinatura entra.
 
 ### 3. Reconciliação: `REPEATABLE READ` + `READ ONLY`, sem lock
 `POST /wallets/:id/reconciliation` abre uma transação **`REPEATABLE READ READ ONLY`**, lê o saldo
