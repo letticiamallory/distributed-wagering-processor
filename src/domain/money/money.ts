@@ -4,6 +4,7 @@ import {
   InvalidMoneyError,
   MoneyOverflowError,
 } from './money.errors.js';
+import { isIso4217Currency } from './iso-4217.js';
 
 // Cuidado 3: um Decimal só nosso, com precisão própria. Não mexemos na configuração
 // global da biblioteca e não dependemos da precisão padrão (20 dígitos).
@@ -107,6 +108,11 @@ export class Money {
     if (typeof currency !== 'string' || !CURRENCY_PATTERN.test(currency)) {
       throw new InvalidMoneyError(
         `Invalid currency, expected 3 uppercase letters: ${String(currency).slice(0, 10)}`,
+      );
+    }
+    if (!isIso4217Currency(currency)) {
+      throw new InvalidMoneyError(
+        `Invalid currency, not an ISO-4217 code: ${currency}`,
       );
     }
   }

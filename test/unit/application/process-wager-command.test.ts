@@ -271,7 +271,8 @@ describe('parseProcessWagerTransactionCommand: INVALID_AMOUNT', () => {
     const input = body({
       kind,
       money: { amount: '0.00', currency: 'BRL' },
-      referenceExternalTransactionId: 'ext-bet',
+      // Só as reversões levam referência (uma BET com referência é INVALID_PAYLOAD).
+      ...(kind !== 'BET' && { referenceExternalTransactionId: 'ext-bet' }),
     });
     expect(codeOf(input)).toBe(FailureCode.InvalidAmount);
   });

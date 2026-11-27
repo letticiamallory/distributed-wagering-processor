@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FailureCode } from '../../domain/errors/failure-code.js';
+import { isIso4217Currency } from '../../domain/money/iso-4217.js';
 import { Money } from '../../domain/money/money.js';
 import { InvalidMoneyError } from '../../domain/money/money.errors.js';
 import {
@@ -50,7 +51,10 @@ export const uuid = z
 // é validado pelo Money (erro de valor).
 export const moneyInput = z.object({
   amount: z.string(),
-  currency: z.string().regex(/^[A-Z]{3}$/, 'must be 3 uppercase letters'),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'must be 3 uppercase letters')
+    .refine(isIso4217Currency, 'must be an ISO-4217 currency code'),
 });
 
 export function detailsOf(error: z.ZodError): InvalidCommandDetail[] {

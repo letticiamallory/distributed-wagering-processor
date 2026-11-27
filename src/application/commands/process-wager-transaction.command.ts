@@ -99,6 +99,18 @@ export function parseProcessWagerTransactionCommand(
   const reversal =
     kind === WagerTransactionKind.Refund ||
     kind === WagerTransactionKind.Rollback;
+  // Uma BET não aponta para nada: uma referência nela é erro do provedor, não algo a ignorar.
+  if (
+    kind === WagerTransactionKind.Bet &&
+    data.referenceExternalTransactionId !== undefined
+  ) {
+    throw invalidPayload([
+      {
+        path: 'referenceExternalTransactionId',
+        message: 'a BET does not reference another transaction',
+      },
+    ]);
+  }
   if (reversal && data.referenceExternalTransactionId === undefined) {
     throw invalidPayload([
       {

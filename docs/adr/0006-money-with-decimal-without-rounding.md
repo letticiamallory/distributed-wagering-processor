@@ -81,3 +81,11 @@ fora dessa pasta também. O mesmo script falha se `src/domain` importar `@nestjs
   (construtor privado, instância congelada) cobrem o resto.
 − Multi-moeda com escalas diferentes (JPY sem centavos) não é suportado: todas as moedas
   usam 2 casas. Aceitável porque o desafio assume BRL, mas é um limite conhecido.
+
+## Adendo: a moeda é da ISO-4217
+A moeda não é só "3 letras maiúsculas": tem que estar na lista ISO-4217 vigente, fixa no domínio
+(`src/domain/money/iso-4217.ts`). O `Money` recusa o resto (`InvalidMoneyError`), e a entrada da
+API e da fila responde 400 `INVALID_PAYLOAD`, na wallet e na transação. Um teste compara a lista
+com `Intl.supportedValuesOf('currency')`: toda moeda nossa existe lá (pega erro de digitação), e
+as históricas que o Intl ainda conhece (DEM, FRF, HRK, ANG...) não estão na nossa. Uma moeda
+válida que não é a da wallet continua sendo `422 CURRENCY_MISMATCH`.

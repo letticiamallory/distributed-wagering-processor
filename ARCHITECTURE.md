@@ -254,7 +254,7 @@ outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 
 | Categoria | Código | HTTP | O que significa | O que o provedor faz |
 | --- | --- | --- | --- | --- |
-| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim) | **corrigir** e reenviar (com chave nova, se mudou o conteúdo) |
+| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim, moeda fora da ISO-4217, BET com `referenceExternalTransactionId`) | **corrigir** e reenviar (com chave nova, se mudou o conteúdo) |
 | validação | `INVALID_AMOUNT` | 400 | valor fora do formato (`"10.5"`, `"1e3"`, negativo, 3 casas) | **corrigir** |
 | validação | `UNSUPPORTED_KIND` | 400 | `kind` fora de BET, WIN, LOSS, REFUND, ROLLBACK | **corrigir** |
 | idempotência | `IDEMPOTENCY_KEY_REUSED` | 409 | mesma chave com conteúdo diferente | **não reenviar**: é bug do provedor; usar uma chave nova se a operação é outra |
@@ -526,7 +526,7 @@ mesma validação do comando.
 | **Lote do consumidor** | o lote de até 10 mensagens espera o grupo mais lento | seção 6.1 |
 | **Duplicata na DLQ** | possível se o processo morrer entre o envio e o delete | seção 6.1 |
 | **Outbox**: índice `(occurred_at) WHERE published_at IS NULL` não existe | só vale criar se o backlog crescer; hoje não foi medido como necessário | ADR-0012 |
-| **Moedas** | todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
+| **Moedas** | só os códigos ISO-4217 vigentes, numa lista fixa no domínio (`src/domain/money/iso-4217.ts`; uma emenda nova da ISO entra lá); todas usam 2 casas (JPY sem centavos não é suportado); teto de 16 dígitos inteiros | ADR-0006 |
 | **`check:money` é uma heurística de linha** | pega o descuido comum (`parseFloat(amount)`); não prova que não existe `number` em lugar nenhum | ADR-0006 |
 | **Autenticação** | não implementada (desenho na seção 9) | ADR-0010 |
 | **SIGTERM real no Windows** | o Node não executa handlers de sinal no Windows; o teste real roda em Linux (no CI e em container) e no Windows prova só a ligação do encerramento | ADR-0011 |

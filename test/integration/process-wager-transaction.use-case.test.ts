@@ -394,21 +394,27 @@ describe('ProcessWagerTransaction: BET', () => {
     await assertInvariants(sql, wallet.id);
   });
 
-  test('a BET that carries a reference field ignores it: the policy never validated it, so it is NOT linked', async () => {
+  // Antes uma BET com referência era aceita e a referência, ignorada (bug 5 do avaliador). Agora é
+  // payload inválido: nada é gravado e o saldo não muda.
+  test('a BET that carries a reference field is INVALID_PAYLOAD, and nothing is recorded', async () => {
     const wallet = await walletWith('100.00');
     const other = await submit(body(wallet)); // uma transação qualquer, já PROCESSED
     const otherExternal = String(
       (await txRow(other.transactionId)).external_transaction_id,
     );
+    const input = body(wallet, {
+      referenceExternalTransactionId: otherExternal,
+    });
 
-    const bet = await submit(
-      body(wallet, { referenceExternalTransactionId: otherExternal }),
-    );
-
-    expect(bet.status).toBe(WagerTransactionStatus.Processed);
-    const row = await txRow(bet.transactionId);
-    expect(row.reference_transaction_id).toBeNull(); // não virou vínculo
-    expect(row.reference_external_transaction_id).toBe(otherExternal); // o que o provedor mandou fica como veio
+    await expect(submit(input)).rejects.toMatchObject({
+      code: FailureCode.InvalidPayload,
+    });
+    expect(
+      await sql(
+        'SELECT id FROM wager_transactions WHERE external_transaction_id = ?',
+        [String(input.externalTransactionId)],
+      ),
+    ).toHaveLength(0);
     await assertInvariants(sql, wallet.id);
   });
 
