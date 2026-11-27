@@ -315,10 +315,20 @@ livre e levam **503 com `Retry-After`**, mesmo em wallets distintas. Rajada de 1
 | 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
 | 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
 | 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+| 3 s (padrão), **outra máquina** ¹ | 0–85 | 5,1–6,2 s | 4,1–5,7 s | 0–2 |
+
+¹ Medido na segunda avaliação independente (27/11/2026, Windows 11 com Docker Desktop, outra
+máquina), com o mesmo `bun scripts/burst.ts`, 3 execuções: 0, 69 e 85 respostas 503; as 30 wallets
+terminaram certas em todas.
+
+**Estes números são medidas destas máquinas; não são uma propriedade do sistema.** Dependem do host, da
+carga do Docker e do que mais estiver rodando: na segunda avaliação a mesma configuração deu de 0 a 85
+respostas 503 e um p95 de até 5,7 s. O que o sistema garante é outra coisa: nenhum reenvio de um 503
+duplica um lançamento, e o 503 vem com `Retry-After`.
 
 Em todas as execuções as 30 wallets terminaram certas depois do reenvio dos 503. A vazão é a mesma
-nos três: um timeout maior troca 503 por espera. O padrão é **3 s**: corta de 50% a 80% dos 503 de
-1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido porque somaria com o `lock_timeout` (5 s) e
+nos três valores: um timeout maior troca 503 por espera. O padrão é **3 s**: nas medições da tabela cortou de
+50% a 80% dos 503 de 1 s, com o p95 perto de 5 s. 5 s não foi escolhido porque somaria com o `lock_timeout` (5 s) e
 dobraria o pior caso de uma requisição, o que tende a estourar o timeout do provedor. Refaça com:
 
 ```bash
@@ -653,7 +663,7 @@ passa pela mesma validação do comando.
 
 | Limitação | O que se sabe | Onde |
 | --- | --- | --- |
-| **Rajada maior que o pool** responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s, 19–52 respostas 503 em 150 requisições (tabela e `bun scripts/burst.ts` na seção 5.2); nenhum reenvio duplica | ADR-0007 |
+| **Rajada maior que o pool** responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s, 19–52 respostas 503 em 150 requisições numa máquina e 0–85 em outra (medidas, não garantia) (tabela e `bun scripts/burst.ts` na seção 5.2); nenhum reenvio duplica | ADR-0007 |
 | **Wallet quente** responde 503 sob pico | quem espera o lock segura uma conexão; refaça com `bun test test/concurrency/hot-wallet.test.ts` | ADR-0007 |
 | **Ordem dos eventos** entre publishers | não garantida; o `walletVersion` ordena | ADR-0012 |
 | **Saldo ↔ ledger no banco cobre o estado final** | a constraint diferida não confere a corrente inteira; um `balance_before` antigo errado continua sendo achado da reconciliação, que só detecta | ADR-0004 |
