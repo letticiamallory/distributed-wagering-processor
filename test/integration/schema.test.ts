@@ -20,7 +20,7 @@ describe('wallets', () => {
         crypto.randomUUID(),
         overrides.playerId ?? crypto.randomUUID(),
         overrides.currency ?? 'BRL',
-        overrides.balance ?? '100.00',
+        overrides.balance ?? '0.00',
         overrides.version ?? 1,
       ],
     );

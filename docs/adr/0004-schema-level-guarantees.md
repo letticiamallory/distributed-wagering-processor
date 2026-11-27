@@ -37,6 +37,17 @@ Toda constraint tem nome (`ck_`, `uq_`, `fk_`, `pk_`), para o erro dizer qual re
 - **`ck_ledger_direction`:** removida. A aritmética já só aceita DEBIT e CREDIT
   (verificado: com direção inválida, o erro cita `ck_ledger_arithmetic`).
 
+- **Saldo ↔ ledger (constraint diferida, achado de avaliação):** `trg_wallet_balance_has_ledger`
+  é uma constraint trigger `DEFERRABLE INITIALLY DEFERRED` em `wallets` (INSERT e UPDATE de
+  `balance` ou `version`). No COMMIT, confere o estado FINAL da wallet: existe o lançamento da versão
+  atual, e o `balance_after` dele é o saldo; a única wallet sem lançamento é a que nasceu zerada e
+  nunca mudou (versão 1, saldo 0). Diferida porque, na operação, o UPDATE da wallet vem antes do
+  INSERT do lançamento, na mesma transação, e um CHECK não enxerga outra tabela. Recusa (23514) um
+  UPDATE cru do saldo, uma versão pulada e uma wallet que nasce com saldo sem a OPENING. Não confere a
+  corrente inteira nem o vínculo do lançamento com a transação: isso continua com a reconciliação.
+  Os testes que adulteram o banco de propósito usam `session_replication_role = replica`
+  (`test/support/tamper.ts`), que desliga os triggers só naquela transação.
+
 ## Consequências
 + O banco recusa o que o código esquecer, e cada regra tem um teste que tenta violá-la.
 + Um teste revelou que `amount > 0` fora de WIN/LOSS deixava passar WIN negativo,

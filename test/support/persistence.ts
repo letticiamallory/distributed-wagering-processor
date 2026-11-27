@@ -3,6 +3,7 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import type { Repositories } from '../../src/application/ports/unit-of-work.js';
 import { Money } from '../../src/domain/money/money.js';
 import { Wallet } from '../../src/domain/wallet/wallet.js';
+import type { WalletLedgerEntry } from '../../src/domain/wallet/wallet-ledger-entry.js';
 import { WagerTransactionKind } from '../../src/domain/wager/wager-transaction-kind.js';
 import {
   WagerTransaction,
@@ -96,14 +97,23 @@ export function newWallet(
   balance = '100.00',
   overrides: { playerId?: string; id?: string } = {},
 ): Wallet {
-  return Wallet.open({
+  const { wallet, openingEntry } = Wallet.open({
     id: overrides.id ?? uuid(),
     playerId: overrides.playerId ?? uuid(),
     initialBalance: brl(balance),
     opening: { transactionId: uuid(), entryId: uuid() },
     at: T0,
-  }).wallet;
+  });
+  if (openingEntry) {
+    openings.set(wallet, openingEntry);
+  }
+  return wallet;
 }
+
+// O lançamento de abertura de cada wallet criada por newWallet: o persistWallet o grava junto, como
+// o caso de uso de criação faz. Sem ele, o banco recusa no COMMIT uma wallet que nasce com saldo
+// (trg_wallet_balance_has_ledger: todo saldo tem o seu lançamento).
+const openings = new WeakMap<Wallet, WalletLedgerEntry>();
 
 // Uma transação PENDING pronta para decidir o destino (markProcessed, reject...).
 export function newTransaction(
@@ -137,5 +147,21 @@ export async function persistWallet(
 ): Promise<void> {
   await uow.run(async (r: Repositories) => {
     await r.wallets.insert(wallet);
+    const entry = openings.get(wallet);
+    if (!entry) {
+      return;
+    }
+    await r.transactions.insert(
+      WagerTransaction.createOpening({
+        id: entry.transactionId,
+        walletId: wallet.id,
+        playerId: wallet.playerId,
+        money: entry.money,
+        payloadHash: HASH,
+        correlationId: 'setup',
+        createdAt: T0,
+      }),
+    );
+    await r.ledger.append(entry);
   });
 }

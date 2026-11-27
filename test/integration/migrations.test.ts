@@ -21,7 +21,15 @@ const TABLES = [
   'wallet_ledger_entries',
   'wallets',
 ];
-const FUNCTIONS = ['forbid_ledger_mutation', 'forbid_terminal_change'];
+// As funções de antes da migration de trg_wallet_balance_has_ledger, e as de agora.
+const FUNCTIONS_BEFORE_BALANCE_CHECK = [
+  'forbid_ledger_mutation',
+  'forbid_terminal_change',
+];
+const FUNCTIONS = [
+  'check_wallet_balance_has_ledger',
+  ...FUNCTIONS_BEFORE_BALANCE_CHECK,
+];
 
 let admin: MikroORM;
 let orm: MikroORM;
@@ -89,7 +97,7 @@ test('the PENDING-only-on-INSERT migration goes down (with the ones after it) an
   const playerId = crypto.randomUUID();
   await connection.execute(
     'INSERT INTO wallets (id, player_id, currency, balance, version) VALUES (?, ?, ?, ?, ?)',
-    [walletId, playerId, 'BRL', '100.00', 1],
+    [walletId, playerId, 'BRL', '0.00', 1],
   );
   const newPending = async () => {
     const id = crypto.randomUUID();
@@ -122,7 +130,9 @@ test('the PENDING-only-on-INSERT migration goes down (with the ones after it) an
   // down até a migration ANTERIOR a ela (desfaz ela e as mais novas, que são só índices): a regra
   // some, o resto continua (a função existe, o trigger vale).
   await orm.migrator.down({ to: 'Migration20261126011328_wtx_lookup_indexes' });
-  expect((await schemaObjects()).functions).toEqual(FUNCTIONS);
+  expect((await schemaObjects()).functions).toEqual(
+    FUNCTIONS_BEFORE_BALANCE_CHECK,
+  );
   const id = await newPending();
   expect(await outcomeOfToPending(id)).toBe('accepted'); // como antes da migration
   await connection.execute(
