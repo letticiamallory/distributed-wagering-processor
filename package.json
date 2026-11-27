@@ -30,6 +30,7 @@
     "migration:create": "bun --bun run mikro-orm migration:create",
     "lint": "oxlint --type-aware src/ test/",
     "check:money": "bun scripts/check-money.ts",
+    "check": "bun scripts/check.ts",
     "test": "bun test --path-ignore-patterns \"test/concurrency/**\"",
     "test:concurrency": "bun scripts/concurrency-suite-start.ts && bun test test/concurrency --path-ignore-patterns \"**/global-invariants.test.ts\" && bun test test/concurrency/global-invariants.test.ts",
     "test:all": "bun run test && bun run test:concurrency",

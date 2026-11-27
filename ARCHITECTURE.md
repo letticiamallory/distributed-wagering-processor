@@ -342,6 +342,11 @@ Um REFUND, ROLLBACK, WIN ou LOSS pode chegar **antes** da BET que referencia. El
 - **Política:** 10 tentativas no total (a primeira gravação conta), espera `min(2^n × 1 s, 5 min)`:
   9 esperas = 1+2+4+8+16+32+64+128+256 = **511 s, cerca de 8,5 minutos**. Esgotadas, vira `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
   `WagerTransactionRejected`: nada fica "pendente para sempre".
+- **O campo `attempts`** conta as tentativas que **não** acharam a referência (cada uma deixou a
+  transação em `PENDING_REFERENCE` e agendou a próxima). A tentativa que **decide** (resolve ou
+  rejeita) não incrementa. Com o limite de 10: uma referência que nunca chega dá 9 tentativas sem
+  achar e a 10ª rejeita, então a transação fica `REJECTED` com `attempts: 9`; uma que chega na 2ª
+  tentativa fica `PROCESSED` com `attempts: 1`. Tentativas feitas = `attempts` + 1.
 - **Acordar:** quando a BET é processada, as pendentes **da mesma wallet** que a esperam são
   agendadas para agora, sob o lock; o worker as resolve no ciclo seguinte (em até 1 s). Se o
   atalho se perder, o `next_attempt_at` vence sozinho.
