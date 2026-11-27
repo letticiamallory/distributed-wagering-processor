@@ -156,7 +156,11 @@ antes do ack). Duas perguntas diferentes:
 
 - *Esta **entrega** da fila já foi processada?* → **inbox** (`inbox_messages`, chave primária
   `(consumer_name, message_id)`), gravada na **mesma transação** do negócio. Só existe linha de
-  inbox se o negócio também foi confirmado.
+  inbox se o negócio também foi confirmado. **Toda entrega deixa a sua linha, inclusive a que é
+  resolvida como replay** (a operação já tinha chegado por HTTP ou por outro `messageId`): nesse
+  caso a linha entra com `ON CONFLICT DO NOTHING` e, se já existia, o hash guardado tem que ser o
+  mesmo. Assim o mesmo `messageId` com outro payload é sempre `INBOX_MESSAGE_REUSED` (DLQ), e nunca
+  uma operação nova.
 - *Esta **operação de negócio** já foi processada?* → **chave de idempotência**
   (`wager_transactions.idempotency_key` é `UNIQUE`). Vale entre instâncias **e entre canais**: a
   mesma BET por HTTP e por SQS é uma operação só.
