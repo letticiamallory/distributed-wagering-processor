@@ -1,4 +1,5 @@
-// Um processo de verdade com o PUBLISHER ligado que MORRE (exit 137, como um kill -9) logo depois
+// Um processo de verdade com o PUBLISHER ligado que MORRE com SIGKILL (kill -9 de verdade, sem rodar
+// nenhum handler de saída) logo depois
 // de o SQS aceitar o lote e ANTES do COMMIT que marcaria published_at. O código de produção não
 // tem gancho nenhum para isso: só trocamos a porta (IntegrationEventPublisher) por uma que
 // envia de verdade e então morre.
@@ -14,7 +15,10 @@ class DiesAfterTheSend extends SqsEventPublisher {
   override async publish(messages: readonly OutboxMessage[]) {
     const outcomes = await super.publish(messages);
     process.stdout.write(`SENT ${messages.length}\n`);
-    process.exit(137);
+    // No Linux o pai vê signalCode SIGKILL (exit 137); no Windows o processo é encerrado do mesmo jeito
+    // (TerminateProcess), sem sinal POSIX. O await nunca termina: nada roda depois do kill.
+    process.kill(process.pid, 'SIGKILL');
+    await new Promise<never>(() => {});
     return outcomes;
   }
 }

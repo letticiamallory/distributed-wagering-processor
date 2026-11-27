@@ -90,7 +90,7 @@ lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
 O `lock_timeout` é de 5 s (`DB_LOCK_TIMEOUT_MS`): estourou, é falha **transitória** (503 com
 `Retry-After`), sem gravar nada, e reenviar a mesma chave é seguro (seção 3).
 
-### O que acontece quando se remove cada barreira (medido, Fase 4)
+### O que acontece quando se remove cada barreira (medido na suíte de concorrência)
 
 Cada linha é uma **sabotagem**: tirei a proteção do código, rodei a suíte de concorrência e
 registrei o que quebrou. O objetivo é provar que os testes realmente enxergam cada defesa.
@@ -142,8 +142,8 @@ O custo é tempo e tráfego de reenvio numa wallet quente, nunca correção.
 conexão**, para quem espera ocupar uma entrada de fila (barata) e não uma conexão. O `FOR UPDATE`
 continua sendo a garantia entre processos. Exige limite de tamanho e de espera da fila e muda o
 desenho do ADR-0007, então entra com ADR próprio. Aumentar o pool foi descartado (3 processos × 50
-passam dos 100 do Postgres) e o acquire timeout de 1 s é do manual (dá para medir com
-`DB_ACQUIRE_TIMEOUT_MS`).
+passam dos 100 do Postgres) e o acquire timeout de 1 s é uma escolha de controle de admissão (recusar cedo em vez de
+enfileirar; dá para medir outros valores com `DB_ACQUIRE_TIMEOUT_MS`).
 
 ---
 
@@ -306,7 +306,8 @@ disputa pelo lock); a garantia de correção é do banco.
   FIFO a descarta na maioria dos casos; a DLQ não é processada).
 - **SIGTERM:** para de buscar, espera as mensagens em andamento (`SQS_SHUTDOWN_TIMEOUT_MS`) e
   devolve à fila, com visibilidade 0, as que foram recebidas e não começaram.
-- Testes: crash real (processo filho morto com `SIGKILL` antes do delete: a mensagem volta e o
+- Testes: crash real (o processo filho se mata com `SIGKILL` no instante do delete, depois do
+  commit; a mensagem volta e o
   efeito não duplica) e o `SIGTERM` real num processo (só em Linux; no Windows o Node não
   executa handlers de sinal).
 
@@ -335,8 +336,7 @@ Um REFUND, ROLLBACK, WIN ou LOSS pode chegar **antes** da BET que referencia. El
 `PENDING_REFERENCE` (202) e um worker o resolve:
 
 - **Política:** 10 tentativas no total (a primeira gravação conta), espera `min(2^n × 1 s, 5 min)`:
-  9 esperas = 1+2+4+8+16+32+64+128+256 = **511 s, cerca de 8,5 minutos**. (O "14 min" do manual
-  está obsoleto.) Esgotadas, vira `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
+  9 esperas = 1+2+4+8+16+32+64+128+256 = **511 s, cerca de 8,5 minutos**. Esgotadas, vira `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
   `WagerTransactionRejected`: nada fica "pendente para sempre".
 - **Acordar:** quando a BET é processada, as pendentes **da mesma wallet** que a esperam são
   agendadas para agora, sob o lock; o worker as resolve no ciclo seguinte (em até 1 s). Se o
@@ -412,7 +412,7 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
   balanceador parar de mandar tráfego. Há testes que derrubam um PostgreSQL e um MiniStack
   **reais** (containers descartáveis) e veem o 503 e depois o 200.
 - `/health` e `/metrics` são **abertos** (enunciado, seção 9).
-- **Sabotagens das Fases 5 a 8** (todas com SHA-256 idêntico antes e depois do experimento):
+- **Sabotagens do consumidor, da outbox e do worker, da observabilidade e das consultas** (todas com SHA-256 idêntico antes e depois do experimento):
   consumidor, 10 variantes (apagar antes do commit derrubou 15 testes; sem inbox derrubou 4, e
   note que **o débito não duplica**, porque a chave de idempotência cobre: quem acusa é a linha da
   inbox); outbox e worker, 10 (sem `SKIP LOCKED` derrubou 6); observabilidade, 15 (log que vaza o

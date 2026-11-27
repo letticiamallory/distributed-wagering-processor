@@ -45,8 +45,8 @@ Por que o conflito de idempotência leva **ack** e `WALLET_NOT_FOUND` leva **DLQ
 resultado terminal e determinístico (reprocessar dá o mesmo conflito, e a operação original já
 vale); apagar não perde nada, e o `warn` deixa rastro. Já `WALLET_NOT_FOUND` **não gravou nada**:
 a operação não terminou, e um operador pode reinjetar a mensagem depois de criar a wallet. Ack
-aqui perderia dinheiro de verdade. (O manual mandava os conflitos para a DLQ; o enunciado os chama
-de erros de negócio, terminais, com ack, e é ele quem manda.)
+aqui perderia dinheiro de verdade. (Mandar os conflitos para a DLQ foi considerado; o enunciado os chama de
+erros de negócio, terminais, com ack, e é ele quem manda.)
 
 ### 3. Como o permanente chega à DLQ: envio explícito
 O consumidor faz `SendMessage` na DLQ (corpo intacto, mesmo `MessageGroupId`, atributos `reason`,
@@ -113,7 +113,7 @@ como o filtro HTTP faz. Nunca há ack silencioso.
 
 ### 9. Ligado por padrão, desligado nos testes, e filas de teste separadas
 `SQS_CONSUMER_ENABLED` vale `true` por padrão (é o que o `docker compose up` espera). Em
-`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da Fase 4), e
+`test/support/setup.ts` ele é fixado em `false` (inclusive para os processos filhos da suíte de concorrência), e
 `SQS_QUEUE_NAME`/`SQS_DLQ_NAME` apontam para filas **só de teste** (`test-app-wager-transactions*`).
 Resultado: a suíte passa com a stack inteira no ar (`docker compose up -d`, com o consumidor do app
 de verdade ligado nas filas reais), porque **nenhum teste envia mensagem às filas reais**. O único
@@ -125,11 +125,11 @@ processos da suíte de concorrência não a consomem.
 ## Alternativas consideradas
 - **Só o redrive para os permanentes**: mais simples e atômico, mas bloqueia o grupo FIFO por N
   entregas e a DLQ perde o motivo.
-- **Conflitos de idempotência na DLQ** (manual): enche a DLQ com mensagens que o operador não tem
+- **Conflitos de idempotência na DLQ**: enche a DLQ com mensagens que o operador não tem
   o que fazer; o `warn` com os ids dá o mesmo rastro.
 - **`maxReceiveCount` 5**: só 60 s de espera total.
 - **Processar o lote em paralelo sem agrupar por grupo**: mais vazão, mas disputa o lock da mesma
-  wallet e prende conexões do pool (o limite medido na Fase 4, ADR-0007).
+  wallet e prende conexões do pool (o limite medido na suíte de concorrência, ADR-0007).
 
 ## Consequências
 + Ack só depois do commit; reentrega vira replay; permanentes saem da frente na 1ª entrega, com

@@ -114,7 +114,11 @@ describe('the process dies between the commit and the publication', () => {
     const output = new Response(child.stdout as ReadableStream).text();
     const errors = new Response(child.stderr as ReadableStream).text();
     const code = await child.exited;
-    expect(code, await errors).toBe(137);
+    // Morreu mesmo (kill -9). No POSIX o sinal é visível; no Windows só o código diferente de 0.
+    expect(code, await errors).not.toBe(0);
+    if (process.platform !== 'win32') {
+      expect(child.signalCode).toBe('SIGKILL');
+    }
     expect(await output).toContain('SENT');
 
     // O COMMIT não aconteceu: nada ficou marcado como publicado, embora o SQS tenha recebido.

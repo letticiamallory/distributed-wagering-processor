@@ -65,7 +65,7 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
 - `UNIQUE (reference_transaction_id, kind)`: cumpre o texto do enunciado,
   mas deixa passar REFUND seguido de ROLLBACK.
 - Checar só no código: duas instâncias processando ao mesmo tempo passam pela checagem juntas.
-- Deixar o ROLLBACK de uma BET premiada passar (como o texto do manual permite): o jogador
+- Deixar o ROLLBACK de uma BET premiada passar (o enunciado não proíbe): o jogador
   ficaria com o WIN e com a aposta de volta. Fechado pela regra irmã 2.
 - Um WIN por BET (índice único): quebraria o pagamento em partes e as rodadas bônus, que são
   casos reais. O risco que ele cobriria (pagar e devolver a mesma aposta) já está fechado pela
@@ -83,5 +83,5 @@ Cada transação é revertida no máximo uma vez, por qualquer tipo. O índice �
   wallet, para duas requisições não decidirem com a mesma foto do banco.
 − Não há teto para a soma dos WINs de uma BET: o valor do prêmio é do provedor. Quem confere
   se o total pago faz sentido é o provedor; a reconciliação (ADR-0015) só confere saldo contra ledger e não avalia a soma dos prêmios.
-− O caminho normal é o caso de uso (Fase 3) recusar a segunda reversão como rejeição de negócio;
+− O caminho normal é o caso de uso de processamento (ADR-0007) recusar a segunda reversão como rejeição de negócio;
   o índice é a rede de segurança para bugs e corridas, não o fluxo principal.

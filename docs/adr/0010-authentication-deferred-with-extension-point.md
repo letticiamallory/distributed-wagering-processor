@@ -28,7 +28,7 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
   quando o corpo traz um `providerId`, exige que a identidade possa agir como ele (senão 403
   `PROVIDER_FORBIDDEN`). Autenticar vem antes de validar o corpo (401 antes de 400).
 - Um teste percorre **todos os controllers registrados** e falha se algum, exceto o de health,
-  estiver sem o guard (as consultas da Fase 8 entraram sob essa regra; o `/metrics` é aberto como o health, ver o adendo da Fase 7).
+  estiver sem o guard (as consultas do ADR-0015 entraram sob essa regra; o `/metrics` é aberto como o health, ver o adendo do ADR-0014).
 - Os casos de uso **não** conhecem identidade. A validação do `providerId` (não vazio, até 200
   caracteres, texto) mora no comando, então vale igual para HTTP e SQS.
 
@@ -53,7 +53,7 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
   provedor de jogos: quem cria a conta do jogador é o sistema que o cadastra, não o provedor que
   só envia apostas. A identidade ganharia um método de escopo (por exemplo `hasScope`) e o guard
   da rota de wallet o exigiria; os provedores receberiam só o escopo de transações.
-- **Consultas** (implementado na Fase 8, ver o adendo ao fim): o guard compara o `:providerId` da
+- **Consultas** (implementado com o ADR-0015, ver o adendo ao fim): o guard compara o `:providerId` da
   rota com a identidade, igual ao corpo.
 - **Trocar a implementação:** uma classe nova que estende `ProviderIdentityPort` (a que lê o
   JWKS, com a biblioteca `jose`), ligada no módulo no lugar da `Unrestricted...`, mais a configuração
@@ -87,13 +87,13 @@ Deixamos, no lugar dela, um **ponto de extensão** pequeno, testado e com a form
 − O 403 por `providerId` só protege o que o corpo declara: as consultas de leitura herdam a
   mesma regra quando forem escritas, e o teste de "todo controller tem guard" é o que garante isso.
 
-## Adendo (Fase 7, ADR-0014): `/metrics` também é aberto
+## Adendo (ADR-0014): `/metrics` também é aberto
 O `GET /metrics` fica aberto como o `/health`: quem o raspa (o Prometheus) não é um provedor e não
 tem token. Só expõe contagens e latências, nunca um valor, uma wallet ou um jogador (há um teste). O
 teste que percorre todos os controllers agora aceita sem o guard **só** o de health e o de métricas.
 Num ambiente real, o `/metrics` ficaria numa porta ou rede internas.
 
-## Adendo (Fase 8, ADR-0015): o guard também confere o `:providerId` da rota
+## Adendo (ADR-0015): o guard também confere o `:providerId` da rota
 O `ProviderAuthGuard` compara o `providerId` do **corpo** com o que o token pode representar (403 se
 não puder). Com as consultas, ele passou a conferir também o `:providerId` da **rota**
 (`GET /providers/:providerId/wagering/transactions/:externalId`): um token do provedor A não lê as

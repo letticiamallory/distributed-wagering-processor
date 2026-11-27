@@ -20,8 +20,7 @@ instabilidade de fila ou de rede sem deixar dinheiro "pendurado" por horas. Depo
 tentativa, sem referência: `REJECTED` com `REFERENCE_NOT_FOUND` e o evento
 `WagerTransactionRejected` (o PENDING nunca vira "para sempre pendente"). Os valores vêm de
 `PENDING_REFERENCE_MAX_ATTEMPTS`, `PENDING_REFERENCE_BASE_DELAY_MS` e `PENDING_REFERENCE_MAX_DELAY_MS`,
-validados na subida (o `PendingReferenceSchedule`, do domínio). O "14 min" do manual está
-obsoleto: a conta com 10 tentativas é a de cima.
+validados na subida (o `PendingReferenceSchedule`, do domínio). A conta com 10 tentativas é a de cima.
 
 ### 2. Dois mecanismos de acordar
 - **O atalho:** quando uma BET é processada, `wakePendingReferences` marca
@@ -42,7 +41,7 @@ UPDATE wager_transactions SET next_attempt_at = agora + lease
 RETURNING id, wallet_id
 ```
 O lease (30 s) é "o item é seu até aqui". Se o worker morre, o lease vence e outro assume (teste).
-Para cada item reservado, o worker chama o **mesmo** `ResolvePendingReferenceUseCase` da Fase 3,
+Para cada item reservado, o worker chama o **mesmo** `ResolvePendingReferenceUseCase` do fluxo de processamento,
 que **trava a wallet, relê a transação sob o lock e só então decide**. Wallets diferentes em
 paralelo; a mesma wallet em sequência.
 

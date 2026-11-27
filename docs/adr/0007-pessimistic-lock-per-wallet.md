@@ -21,7 +21,7 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
   de uma reversão é lida sem lock, e isso é seguro por uma regra que vale para o sistema todo:
   **toda decisão de estado ou de dinheiro acontece sob o lock da wallet; colunas só de
   agendamento (`next_attempt_at`) podem ser escritas sem ele, porque toda decisão relê sob o
-  lock**. Isso vale inclusive para o worker de `PENDING_REFERENCE` (Fase 6, ADR-0013). Como a referência pertence à mesma
+  lock**. Isso vale inclusive para o worker de `PENDING_REFERENCE` (ADR-0013). Como a referência pertence à mesma
   wallet, quem tem o lock a vê estável: ninguém pode mudá-la enquanto a decisão é tomada. Se
   ela pertencer a outra wallet, nada a protege, mas a política a recusa com
   `REFERENCE_MISMATCH` antes de usar o que leu. Quem quebrar essa regra (gravar numa wallet
@@ -77,7 +77,7 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 
 ## Consequências
 + Fácil de provar correto: quem tem o lock vê o saldo final, e o teste de concorrência
-  (Fase 4) confere o saldo contra o ledger.
+  (a suíte de concorrência) confere o saldo contra o ledger.
 + Sem deadlock por desenho, e o timeout vira um 503 que o provedor sabe tratar.
 − Operações na mesma wallet são serializadas. É o comportamento desejado, mas o limite de
   vazão de uma wallet muito quente é o de uma transação por vez.
@@ -86,7 +86,7 @@ wallet** com `SELECT ... FOR UPDATE` antes de decidir qualquer coisa.
 − Escrever `INSERT` e `UPDATE` à mão tira do MikroORM o rastreamento de mudanças: cada
   gravação nova é um método do repositório, com teste contra o Postgres real.
 
-## Limite conhecido e trabalho futuro (medido na Fase 4)
+## Limite conhecido e trabalho futuro (medido na suíte de concorrência)
 Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**. Numa hot wallet as
 operações são processadas uma por vez, mas cada requisição na fila ocupa uma das 20 conexões do
 processo; quando elas se esgotam, as seguintes esperam no máximo 1 s por uma conexão livre e levam
@@ -104,5 +104,5 @@ pool, que fica livre para quem de fato trabalha. O lock `FOR UPDATE` continua se
 entre processos; a fila só evita que as esperas dentro de um processo consumam conexões. Exige
 limite de tamanho e de espera da fila (senão vira enfileirar para sempre) e muda o desenho deste
 ADR, então entra com ADR próprio. Alternativas mais baratas, descartadas por ora: aumentar o pool
-(3 processos × 50 passam dos 100 do Postgres) e subir o acquire timeout (o manual fixa 1 s de
-propósito; dá para medir só com `DB_ACQUIRE_TIMEOUT_MS`).
+(3 processos × 50 passam dos 100 do Postgres) e subir o acquire timeout (1 s é de propósito, para
+recusar cedo; dá para medir outros valores só com `DB_ACQUIRE_TIMEOUT_MS`).
