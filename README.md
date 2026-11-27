@@ -2,19 +2,23 @@
 
 [![CI](https://github.com/letticiamallory/distributed-wagering-processor/actions/workflows/ci.yml/badge.svg)](https://github.com/letticiamallory/distributed-wagering-processor/actions/workflows/ci.yml)
 
-Serviço de carteira (wallet) para apostas: processa transações de provedores de jogos que chegam
-por **HTTP** e por **SQS**, sem nunca deixar o saldo negativo, sem duplicar um débito quando o
-provedor reenvia, e sem perder um evento confirmado. NestJS 12 e MikroORM 7 sobre PostgreSQL 16,
-rodando no Bun 1.4.5; SQS emulado pelo MiniStack.
+Serviço de carteira (wallet) para apostas, feito para o desafio técnico da Jungle Gaming. Processa
+transações de provedores de jogos que chegam por **HTTP** e por **SQS**, sem deixar o saldo
+negativo, sem duplicar débito nem crédito quando a mensagem chega de novo, e sem perder um evento
+confirmado. NestJS 12 e MikroORM 7 sobre PostgreSQL 16, no Bun 1.4.5; o SQS é emulado pelo MiniStack.
 
-- **Como a coisa funciona e por quê:** [ARCHITECTURE.md](ARCHITECTURE.md) (decisões, trade-offs e
-  limitações, com os números medidos).
-- **Cada decisão, uma por arquivo:** [docs/adr](docs/adr/README.md).
+| Para | Leia |
+| --- | --- |
+| subir, testar e conferir cada requisito | este README |
+| entender **como** e **por quê** (decisões, trade-offs, limitações, números medidos) | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| uma decisão a fundo, com as alternativas recusadas | [docs/adr](docs/adr/README.md) (16 ADRs) |
 
-## Como avaliar em 5 minutos
+## Avaliar em 5 minutos
 
-**Pré-requisitos:** Docker com Compose v2. Para os testes, o [Bun](https://bun.sh) **1.4.5**. Para
-os exemplos abaixo, `bash` e `curl`. O repositório não precisa de nenhum arquivo `.env` para subir.
+**Pré-requisitos:** Docker com Compose v2; para os testes, o [Bun](https://bun.sh) **1.4.5**; para
+os exemplos, `bash` e `curl`. O compose não precisa de arquivo `.env`.
+
+**1. Subir.**
 
 ```bash
 git clone https://github.com/letticiamallory/distributed-wagering-processor.git
@@ -23,49 +27,94 @@ docker compose up -d --wait        # postgres, sqs (MiniStack), filas, migration
 curl -s localhost:3000/health/ready
 ```
 
-O `docker compose up` sobe cinco coisas, nesta ordem: o PostgreSQL (que também cria o banco de
-testes `wallet_test`), o MiniStack, o `queues-init` (cria `wager-transactions.fifo`, a DLQ
-`wager-transactions-dlq.fifo` e `wallet-events.fifo`), o `migrate` (aplica o schema e termina) e a
-aplicação em `http://localhost:3000`, que já roda o consumidor SQS, o publisher da outbox e o worker
-de referências pendentes.
-
-Na primeira subida (volume vazio) o PostgreSQL leva perto de 1 minuto para inicializar; o
-healthcheck espera até 170 s, então o `--wait` pode demorar sem que nada esteja errado.
+O compose sobe, nesta ordem: o PostgreSQL (que também cria o banco de testes `wallet_test`), o
+MiniStack, o `queues-init` (cria `wager-transactions.fifo`, a DLQ `wager-transactions-dlq.fifo` e
+`wallet-events.fifo`), o `migrate` (aplica o schema e termina) e a aplicação em
+`http://localhost:3000`, que já roda o consumidor SQS, o publisher da outbox e o worker de
+referências pendentes. Na primeira subida (volume vazio) o PostgreSQL leva perto de 1 minuto para
+inicializar; o healthcheck espera até 170 s, então o `--wait` pode demorar sem que nada esteja
+errado.
 
 > **O MiniStack guarda as filas só em memória (não persiste nada).** Se o container `sqs` reiniciar,
 > as filas e as mensagens que estavam nelas somem, e o consumidor passa a logar
-> `queue_receive_failed`. Para recriá-las, rode de novo `docker compose up -d --wait`: ele executa
-> outra vez o `queues-init` (que é idempotente). Os eventos da outbox não se perdem: ficam no banco e
-> são publicados quando a fila volta.
+> `queue_receive_failed` (e o `/health/ready` responde 503). Para recriá-las, rode de novo
+> `docker compose up -d --wait`: ele executa outra vez o `queues-init` (que é idempotente). Os
+> eventos da outbox não se perdem: ficam no banco e são publicados quando a fila volta.
+
+**2. Ver funcionando.** Cole no `bash` o script de [Exemplos de ponta a ponta](#exemplos-de-ponta-a-ponta):
+ele percorre a API inteira e manda uma aposta pela fila.
+
+**3. Rodar os testes** (usam um banco e filas **próprios**, `wallet_test` e `test-*`: podem rodar
+com a stack do compose no ar).
 
 ```bash
 bun install --frozen-lockfile
-bun run test                # suíte principal
+bun run test                # unidade, integração e e2e
 bun run test:concurrency    # concorrência com paralelismo real
 bun run test:all            # as duas
 ```
 
 | Comando | O que prova |
 | --- | --- |
-| `bun run test` | Unidade, integração e e2e, contra **PostgreSQL e MiniStack de verdade** (sem mock de banco nem de fila): o domínio e o `Money`, as constraints e os triggers do schema, a idempotência, o consumidor SQS (retry, DLQ, ack só depois do commit), a outbox e o worker de pendentes, processos mortos com `SIGKILL`, o formato dos logs, as métricas, o `/health/ready` com dependências derrubadas de verdade, e **os exemplos deste README**. |
-| `bun run test:concurrency` | O saldo nunca fica negativo e **saldo = o que o ledger reconstrói** sob paralelismo real: a mesma aposta 50 vezes ao mesmo tempo, duas apostas disputando o saldo, uma wallet quente, **3 processos** da aplicação sobre o mesmo banco, e 3 publishers sobre a mesma outbox. Termina com uma checagem global de todas as wallets que a suíte criou. |
-| `bun run test:all` | As duas, em sequência. |
+| `bun run test` | Unidade, integração e e2e contra **PostgreSQL e MiniStack de verdade** (sem mock de banco nem de fila): o `Money`, as regras e a máquina de estados, as constraints e os triggers do schema, a idempotência, o consumidor SQS (retry, DLQ, ack só depois do commit), a outbox e o worker de pendentes, processos mortos com `SIGKILL`, o encerramento no `SIGTERM`, os logs, as métricas, o `/health/ready` com dependências derrubadas de verdade, e **os exemplos deste README**. |
+| `bun run test:concurrency` | O saldo nunca fica negativo e **saldo = o que o ledger reconstrói** sob paralelismo real: a mesma aposta 50 vezes ao mesmo tempo, o cenário da seção 8, uma wallet quente, **3 processos** da aplicação sobre o mesmo banco e 3 publishers sobre a mesma outbox. Termina com uma checagem global de todas as wallets que a suíte criou. |
 
-Os testes usam filas e um banco **próprios** (`wallet_test`, filas `test-*`): pode rodá-los com a
-stack do compose no ar. O [ARCHITECTURE.md](ARCHITECTURE.md) tem a tabela das **sabotagens**: o que
-acontece quando se remove cada proteção, para ver que os testes de fato a pegam.
+## Onde está cada requisito
 
-## Exemplos de ponta a ponta (sem token)
+Cada linha é um requisito do enunciado, o código que o cumpre e o teste que o prova. Os caminhos
+desta tabela são conferidos por um teste (`test/unit/readme-requirements-table.test.ts`): se um
+arquivo mudar de lugar, o CI quebra. O porquê de cada decisão está no
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
-A autenticação não está implementada (ADR-0010: o enunciado não a pontua, e o ponto de extensão está
-pronto), então **nenhum exemplo leva `Authorization`**. O bloco abaixo é um único script: cole-o
-inteiro num terminal com `bash` e `curl`, com a stack no ar. Ele cria uma wallet, aposta, repete a
-aposta (replay), recebe um prêmio, devolve uma aposta, mostra uma rejeição e uma referência que
-chega fora de ordem, lê o extrato e a reconciliação, e manda uma aposta **pela fila**.
+| Requisito (seção do enunciado) | Onde está | Que teste prova |
+| --- | --- | --- |
+| Dinheiro sem `number`: string de 2 casas, entradas inválidas recusadas (5, 6.1) | `src/domain/money/money.ts`, `scripts/check-money.ts` | `test/unit/domain/money.test.ts`, `test/unit/scripts/check-money.test.ts` |
+| Multi-moeda (ISO-4217) e conflito de moeda (6.1, 7) | `src/domain/money/iso-4217.ts`, `src/domain/wager/wager-policy.ts` | `test/unit/domain/iso-4217.test.ts`, `test/unit/domain/wager-policy.test.ts` |
+| `Wallet`: construtor privado, `open`/`rehydrate`, `version` (6.0, 6.2) | `src/domain/wallet/wallet.ts` | `test/unit/domain/wallet.test.ts` |
+| `WagerTransaction` e as transições de estado (6.3) | `src/domain/wager/wager-transaction.ts` | `test/unit/domain/wager-transaction.test.ts`, `test/integration/schema-wager-transactions.test.ts` |
+| Ledger imutável, *append-only* (5, 6.4) | `src/domain/wallet/wallet-ledger-entry.ts`, `src/infrastructure/migrations` | `test/unit/domain/wallet-ledger-entry.test.ts`, `test/integration/schema-wallet-ledger.test.ts` |
+| Saldo ↔ ledger também no schema (5, 6.2) | `src/infrastructure/migrations` (`trg_wallet_balance_has_ledger`) | `test/integration/schema-balance-has-ledger.test.ts` |
+| Regras de BET, WIN, LOSS, REFUND, ROLLBACK (7) | `src/domain/wager/wager-policy.ts`, `src/application/use-cases/settle-wager-transaction.ts` | `test/unit/domain/wager-policy.test.ts`, `test/integration/process-wager-transaction.use-case.test.ts` |
+| Reversão uma vez só; prêmio pago impede devolver a aposta (7) | `src/domain/wager/wager-policy.ts`, índice `uq_wtx_reversed_once` | `test/integration/settled-without-reference.test.ts`, `test/integration/schema-wager-transactions.test.ts` |
+| Referência fora de ordem: `PENDING_REFERENCE`, backoff, limite (7.1) | `src/application/use-cases/resolve-pending-reference.use-case.ts`, `src/domain/wager/pending-reference-schedule.ts` | `test/integration/pending-reference.test.ts`, `test/integration/pending-reference-worker.test.ts`, `test/concurrency/reference-arrives-together.test.ts` |
+| Taxonomia de `failureCode` (7.2) | `src/domain/errors/failure-code.ts` | `test/unit/domain/failure-code.test.ts` |
+| Cenário obrigatório: 100.00 e duas BETs de 80.00 (8) | `src/infrastructure/persistence/repositories/mikro-orm-wallet.repository.ts` (`FOR UPDATE` + versão) | `test/concurrency/balance-race.test.ts`, `test/concurrency/database-refuses-negative.test.ts` |
+| A mesma aposta 50 vezes em paralelo (13) | `src/application/use-cases/process-wager-transaction.use-case.ts` | `test/concurrency/same-bet-50.test.ts` |
+| Sem lock global; wallets distintas em paralelo (5, 8) | `src/infrastructure/persistence/repositories/mikro-orm-wallet.repository.ts` | `test/concurrency/wallet-lock-scope.test.ts`, `test/concurrency/hot-wallet.test.ts` |
+| Três ou mais instâncias (8) | o banco decide (nenhum estado em memória) | `test/concurrency/multi-instance.test.ts` |
+| Idempotência persistente, replay e payload divergente (9) | `src/application/use-cases/process-wager-transaction.use-case.ts` | `test/integration/process-wager-transaction.use-case.test.ts`, `test/integration/idempotency-race.test.ts` |
+| Algoritmo do `payloadHash` (9) | `src/domain/wager/wager-payload-hash.ts` | `test/unit/domain/payload-hash.test.ts` |
+| Status HTTP distintos e consistentes (9) | `src/interfaces/http/http-status.ts`, `src/interfaces/http/http-exception.filter.ts` | `test/unit/interfaces/http-status.test.ts`, `test/e2e/http-errors.http.test.ts` |
+| Rotas da API e formato das respostas (9) | `src/interfaces/http` | `test/e2e/wallets.http.test.ts`, `test/e2e/wagering-transactions.http.test.ts`, `test/e2e/queries.http.test.ts` |
+| Extrato com cursor estável e opaco (9) | `src/application/queries/ledger-cursor.ts` | `test/unit/application/ledger-cursor.test.ts`, `test/integration/queries.test.ts` |
+| Reconciliação que detecta e não corrige (9) | `src/application/use-cases/reconcile-wallet.use-case.ts` | `test/integration/reconciliation.test.ts` |
+| Consumidor SQS: mesmo caso de uso, inbox, ack após o commit, DLQ (10) | `src/interfaces/sqs/wager-sqs.consumer.ts`, `src/application/messaging/wager-message-handler.ts` | `test/integration/sqs-consumer.test.ts`, `test/integration/inbox-on-replay.test.ts`, `test/unit/application/wager-message-handler.test.ts` |
+| Worker morto depois do commit e antes do ack (10, 13) | `src/interfaces/sqs/wager-sqs.consumer.ts` | `test/integration/sqs-consumer-crash.test.ts` |
+| `SIGTERM`: termina o que está em andamento (10) | `src/bootstrap.ts` | `test/e2e/sigterm.process.test.ts` (só em Linux), `test/e2e/http-drain.test.ts` |
+| Outbox atômica: nada publicado antes do commit (5, 11) | `src/application/use-cases/settle-wager-transaction.ts`, `src/application/use-cases/publish-outbox-batch.use-case.ts` | `test/integration/persistence-unit-of-work.test.ts`, `test/integration/outbox-crash.test.ts` |
+| Publishers concorrentes sobre a mesma outbox (11) | `src/infrastructure/persistence/repositories/mikro-orm-outbox.repository.ts` (`SKIP LOCKED`) | `test/integration/outbox-publisher.test.ts`, `test/concurrency/outbox-publishers.test.ts` |
+| Eventos mínimos e o envelope versionado (11) | `src/domain/messaging/events` | `test/unit/domain/integration-events.test.ts` |
+| `FAILED`, terminal e auditável (6.3, ADR-0016) | `src/application/use-cases/process-wager-transaction.use-case.ts`, `src/application/messaging/wager-message-handler.ts` | `test/integration/failed-status.test.ts`, `test/unit/application/consumer-failed-decision.test.ts` |
+| Recuperação após reinicialização (13) | todo o estado está no banco | `test/e2e/service-restart.test.ts` |
+| Invariante final: saldo = ledger em toda wallet (13) | `test/support/invariants.ts` | `test/concurrency/global-invariants.test.ts` |
+| Migrations versionadas e reversíveis (4) | `src/infrastructure/migrations` | `test/integration/migrations.test.ts` |
+| Logs JSON sem dados sensíveis (12) | `src/infrastructure/observability/json-logger.ts` | `test/unit/infrastructure/json-logger.test.ts`, `test/e2e/logging.process.test.ts` |
+| Métricas exigidas (12) | `src/application/ports/metrics.port.ts`, `src/infrastructure/observability/prometheus-registry.ts` | `test/e2e/metrics.http.test.ts`, `test/integration/metrics-instrumentation.test.ts` |
+| Liveness e readiness separados (9, 12) | `src/interfaces/http/health/health.service.ts`, `src/infrastructure/health/sqs-probe.ts` | `test/e2e/health-ready.test.ts`, `test/integration/sqs-readiness-queues.test.ts` |
+| Autenticação: decisão e ponto de extensão (2) | `src/application/ports/provider-identity.port.ts`, `src/interfaces/http/provider-auth.guard.ts` | `test/e2e/provider-auth.http.test.ts` |
+| Domínio sem Nest, ORM nem AWS SDK (6.1) | `scripts/check-money.ts` | `test/unit/scripts/check-money.test.ts` |
+
+## Exemplos de ponta a ponta
+
+A autenticação não está implementada (decisão no [ARCHITECTURE.md](ARCHITECTURE.md#510-autenticação-adiada-com-ponto-de-extensão)),
+então **nenhum exemplo leva `Authorization`**. O bloco abaixo é um único script: cole-o inteiro num
+terminal com `bash` e `curl`, com a stack no ar. Ele cria uma wallet, aposta, repete a aposta
+(replay), recebe um prêmio, devolve uma aposta, mostra uma rejeição e uma referência que chega fora
+de ordem, lê o extrato e a reconciliação, e manda uma aposta **pela fila**.
 
 O comentário `# => NNN` antes de cada chamada é o status HTTP esperado. **Um teste
 (`test/e2e/readme-examples.test.ts`) executa este bloco de verdade, com `bash` e `curl`, e confere
-cada status**: se o exemplo parar de funcionar, o CI quebra.
+cada status**; o CI também o roda contra a stack do `docker compose`, subida do zero.
 
 ```bash readme-example
 BASE=${BASE:-http://localhost:3000}
@@ -207,11 +256,37 @@ Saldo esperado ao fim: `145.00` (100 − 25 + 80 − 10 + 10 − 10: aposta, pr�
 REFUND que a devolve, e a aposta enviada pela fila). A reconciliação do passo 12 responde
 `consistent: true` com `checkedEntries: 5`; o teste confere esses números.
 
+## Comandos
+
+Os comandos que rodam **no host** (migrations, a app fora do compose) leem `DATABASE_URL` e
+`SQS_ENDPOINT` do ambiente. O compose não precisa disso, mas num clone limpo `bun run migration:up`
+falha com `DATABASE_URL is required` até você criar o `.env` (o Bun o lê sozinho; os valores do
+modelo apontam para a stack do compose em `localhost`):
+
+```bash
+cp .env.example .env               # bash
+Copy-Item .env.example .env        # PowerShell
+```
+
+```bash
+bun run check               # typecheck, lint, format:check e check:money, em sequência (para no 1º erro)
+bun run build
+bun run migration:up        # aplica as migrations do lado do host (no compose, o serviço `migrate` faz isso)
+bun run migration:down      # desfaz a mais nova
+bun scripts/burst.ts        # uma rajada de 150 requisições em 30 wallets contra a app no ar
+docker compose logs -f app  # logs JSON da aplicação
+docker compose down -v      # derruba tudo e apaga os volumes
+```
+
+Cada linha é um comando só (nada encadeado com `&&`), então funciona igual no bash e no Windows
+PowerShell 5.1.
+
 ## Variáveis de ambiente
 
 Todas têm padrão que funciona no `docker compose`; um valor inválido **derruba a subida** dizendo
 qual variável é. Os valores do compose estão em [docker-compose.yml](docker-compose.yml) e o modelo
-em [.env.example](.env.example). Os padrões abaixo são conferidos por um teste contra o código.
+em [.env.example](.env.example). Os padrões e as faixas abaixo são conferidos por um teste contra o
+código (`test/unit/readme-env-table.test.ts`).
 
 | Variável | Padrão | Faixa | O que faz |
 | --- | --- | --- | --- |
@@ -220,7 +295,7 @@ em [.env.example](.env.example). Os padrões abaixo são conferidos por um teste
 | `SQS_ENDPOINT` | (sem padrão) | | Endpoint do SQS (MiniStack no compose). `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_REGION` seguem o SDK da AWS (no compose: `test`, `test`, `us-east-1`). |
 | `DB_POOL_MIN` | `2` | inteiro ≥ 0 | Conexões mínimas do pool. |
 | `DB_POOL_MAX` | `20` | inteiro ≥ 0 | Conexões máximas **por processo**. Com o pool cheio, o pedido espera até `DB_ACQUIRE_TIMEOUT_MS` e vira 503. |
-| `DB_ACQUIRE_TIMEOUT_MS` | `3000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. O padrão de 3 s foi medido (ARCHITECTURE.md, seção 2): com 1 s, a rajada da tabela dá 503 em mais da metade das requisições. |
+| `DB_ACQUIRE_TIMEOUT_MS` | `3000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. O padrão de 3 s foi medido (ARCHITECTURE.md, seção 5.2): com 1 s, a rajada da tabela dá 503 em mais da metade das requisições. |
 | `DB_LOCK_TIMEOUT_MS` | `5000` | 1 a 600000 | Quanto esperar pelo lock de uma wallet antes de responder 503. |
 | `RETRY_AFTER_SECONDS` | `1` | 1 a 3600 | O `Retry-After` do 503. |
 | `HTTP_SHUTDOWN_DRAIN_MS` | `5000` | 0 a 60000 | No SIGTERM, por quanto tempo o HTTP continua atendendo com o `/health/ready` já em 503, para o balanceador parar de mandar tráfego. |
@@ -255,46 +330,14 @@ Só para os testes: `TEST_DATABASE_URL` (padrão `postgres://wallet:wallet@local
 o nome do banco **tem** que terminar em `_test`), `TEST_DB_RESET=1` (recria o banco de testes) e
 `CONCURRENCY_ROUNDS` (rodadas das cargas de concorrência; padrão `100`).
 
-## Como a requisição anda
-
-```mermaid
-flowchart LR
-  subgraph entrada["Entrada (a mesma regra para os dois canais)"]
-    H["HTTP<br/>POST /wagering/transactions<br/>Idempotency-Key"] --> UC
-    S[("wager-transactions.fifo")] --> C["Consumidor SQS<br/>(grupo = walletId)"]
-    C -->|"ok: ack só depois do commit"| UC
-    C -.->|"permanente ou 10 entregas"| D[("DLQ")]
-  end
-
-  UC["ProcessWagerTransactionUseCase<br/>(idempotência, política, lock da wallet)"]
-
-  subgraph tx["UMA transação PostgreSQL (READ COMMITTED)"]
-    W["wallets<br/>SELECT … FOR UPDATE + version"]
-    T["wager_transactions"]
-    L["wallet_ledger_entries<br/>(append-only)"]
-    I["inbox_messages<br/>(só vindo do SQS)"]
-    O["outbox_messages"]
-  end
-
-  UC --> tx
-  O -->|"FOR UPDATE SKIP LOCKED"| P["Publisher da outbox<br/>(vários ao mesmo tempo)"]
-  P -->|"at-least-once (quem consome deduplica por eventId)"| E[("wallet-events.fifo")]
-  T -->|"PENDING_REFERENCE"| K["Worker de pendentes<br/>(lease, relê sob o lock)"]
-  K --> UC
-```
-
-A mesma operação por HTTP ou por SQS passa pelo **mesmo caso de uso**, e o `payloadHash` é igual.
-Saldo, lançamento no ledger, transação, inbox (quando vem da fila) e evento da outbox são
-gravados na **mesma transação SQL**: ou tudo é confirmado, ou nada. Nada é publicado antes do
-commit.
-
-## Estrutura
+## Mapa do repositório
 
 ```text
-src/domain/          Money, Wallet, ledger, WagerPolicy, eventos (sem framework, sem ORM)
+src/domain/          Money, Wallet, ledger, WagerPolicy, máquina de estados, eventos (sem framework, sem ORM)
 src/application/     casos de uso, portas, comandos, consultas, métricas (sem framework)
 src/infrastructure/  MikroORM (repositórios, UnitOfWork, migrations), SQS, logs, métricas, probes
 src/interfaces/      controllers HTTP, consumidor SQS, workers (outbox e pendentes), módulos Nest
+scripts/             check (verificações estáticas), check-money (fronteiras), burst (rajada), filas
 test/                unit, integration, e2e e concurrency (+ support)
 docs/adr/            as decisões de arquitetura, uma por arquivo
 ```
@@ -302,26 +345,3 @@ docs/adr/            as decisões de arquitetura, uma por arquivo
 As fronteiras (`domain` ← `application` ← `infrastructure` e `interfaces`) são **verificadas** por
 `bun run check:money`, que também roda no CI: o domínio e a aplicação não importam Nest, MikroORM
 nem AWS SDK, e dinheiro nunca passa por `number`.
-
-## Comandos úteis
-
-Os comandos que rodam **no host** (migrations, a app fora do compose) leem `DATABASE_URL` e
-`SQS_ENDPOINT` do ambiente. O compose não precisa disso, mas num clone limpo `bun run migration:up`
-falha com `DATABASE_URL is required` até você criar o `.env` (o Bun o lê sozinho; os valores do
-modelo apontam para a stack do compose em `localhost`):
-
-```bash
-cp .env.example .env               # bash
-Copy-Item .env.example .env        # PowerShell
-```
-
-```bash
-bun run check               # typecheck, lint, format:check e check:money, em sequência (para no 1º erro)
-bun run build
-bun run migration:up        # aplica as migrations do lado do host (no compose, o serviço `migrate` faz isso)
-docker compose logs -f app  # logs JSON da aplicação
-docker compose down -v      # derruba tudo e apaga os volumes
-```
-
-Cada linha é um comando só (nada encadeado com `&&`), então funciona igual no bash e no Windows
-PowerShell 5.1.
