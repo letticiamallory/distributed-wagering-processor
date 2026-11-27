@@ -36,7 +36,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
       sqs:
-        image: ministackorg/ministack
+        image: ministackorg/ministack:1.5.44
         ports:
           - 4566:4566
         # A imagem não tem curl nem wget, mas tem Python (o mesmo healthcheck do compose).

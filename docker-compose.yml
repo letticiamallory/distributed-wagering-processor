@@ -28,7 +28,7 @@ services:
       retries: 10
 
   sqs:
-    image: ministackorg/ministack
+    image: ministackorg/ministack:1.5.44
     ports:
       - "4566:4566"
     # A imagem não tem curl nem wget, mas tem Python.
@@ -46,7 +46,7 @@ services:
 
   # Roda uma vez, cria as filas e termina.
   queues-init:
-    image: amazon/aws-cli
+    image: amazon/aws-cli:2.42.3
     entrypoint: ["sh"]
     command: ["/scripts/init-queues.sh"]
     environment:
