@@ -29,7 +29,8 @@ para máquina.
 ## 1. Objetivos: as invariantes e quem as garante
 
 O enunciado (seção 3) fixa as invariantes globais. Cada uma tem uma defesa no código e outra no
-banco, porque "as garantias devem ser aplicadas no schema, não apenas em código" (seção 5).
+banco, porque "As garantias de unicidade, imutabilidade e não-negatividade descritas na seção 6
+devem ser aplicadas no schema do banco, não apenas em código de aplicação" (enunciado, seção 5).
 
 | Invariante | No código | No banco | Detalhe |
 | --- | --- | --- | --- |
@@ -425,9 +426,9 @@ outros, reenviar a mesma chave sem mudar nada dá exatamente o mesmo resultado.
 
 | Categoria | Código | HTTP | O que significa | O que o provedor faz |
 | --- | --- | --- | --- | --- |
-| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim, texto com caractere de controle, moeda fora da ISO-4217, BET com `referenceExternalTransactionId`) | **corrigir** e reenviar (com chave nova, se mudou o conteúdo) |
-| validação | `INVALID_AMOUNT` | 400 | valor fora do formato (`"10.5"`, `"1e3"`, negativo, 3 casas) | **corrigir** |
-| validação | `UNSUPPORTED_KIND` | 400 | `kind` fora de BET, WIN, LOSS, REFUND, ROLLBACK (OPENING é interno) | **corrigir** |
+| validação | `INVALID_PAYLOAD` | 400 | corpo fora do contrato (campo ausente, tipo errado, JSON ruim, texto com caractere de controle, moeda fora da ISO-4217, BET com `referenceExternalTransactionId`) | **corrigir** e reenviar com a **mesma** chave: um 400 não grava nada |
+| validação | `INVALID_AMOUNT` | 400 | valor fora do formato (`"10.5"`, `"1e3"`, negativo, 3 casas) | **corrigir** e reenviar com a **mesma** chave |
+| validação | `UNSUPPORTED_KIND` | 400 | `kind` fora de BET, WIN, LOSS, REFUND, ROLLBACK (OPENING é interno) | **corrigir** e reenviar com a **mesma** chave |
 | idempotência | `IDEMPOTENCY_KEY_REUSED` | 409 | mesma chave com conteúdo diferente | **não reenviar**: é bug do provedor |
 | idempotência | `EXTERNAL_ID_CONFLICT` | 409 | o id externo já existe sob outra chave | **não reenviar**; reconciliar as chaves |
 | negócio | `WALLET_NOT_FOUND` | 404 | a wallet não existe (nada foi gravado) | criar a wallet e reenviar a **mesma** chave; na fila, a mensagem vai para a DLQ |
