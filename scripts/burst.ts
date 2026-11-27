@@ -4,7 +4,7 @@
 // reenvia só os 503 até passarem e confere que toda wallet terminou certa (100.00 - 3 x 30.00 = 10.00,
 // as outras duas BETs rejeitadas por saldo) e consistente com o ledger.
 //
-// Para refazer a tabela do ARCHITECTURE.md (seção 2), suba a app com cada valor e rode o script:
+// Para refazer a tabela do ARCHITECTURE.md (seção 5.2), suba a app com cada valor e rode o script:
 //   DB_ACQUIRE_TIMEOUT_MS=1000 docker compose up -d --wait app
 //   bun scripts/burst.ts
 const BASE = process.env.BASE ?? 'http://localhost:3000';
