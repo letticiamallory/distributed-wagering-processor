@@ -308,6 +308,9 @@ Além dos 20, a API tem códigos que **não** são de transação: `WALLET_ALREA
   stack vaza; a causa vai para o **log**, com o mesmo `correlationId`.
 - **`REJECTED` é 422, não 200**: o provedor sabe pelo status que nada foi aplicado e que reenviar
   não muda nada. O custo: dois formatos de corpo de erro (o envelope e o resultado do 422).
+- **O provedor `internal` é do sistema** (é o da transação OPENING): `providerId` `internal`, com
+  qualquer caixa, ou uma `Idempotency-Key` começando com `internal:` é 400 `INVALID_PAYLOAD`, e
+  `GET /providers/internal/...` responde 404 (a OPENING continua legível pelo id da transação).
 - **`Idempotency-Key` repetido** (duas linhas do header) é 400: o Node junta em `"a, b"`, e
   adivinhar qual vale poderia duplicar um débito.
 - **As consultas** (`GET`) respondem **200 para qualquer status** guardado (um `REJECTED` ou um

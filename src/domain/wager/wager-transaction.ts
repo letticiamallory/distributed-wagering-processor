@@ -49,6 +49,14 @@ export interface CreateOpeningProps {
 
 const ALL_KINDS = Object.values(WagerTransactionKind);
 
+// O provedor da transação OPENING, que é do sistema. Reservado: nenhum provedor de verdade pode usar
+// este nome (nem com outra caixa), nem uma chave de idempotência no namespace dele.
+export const INTERNAL_PROVIDER_ID = 'internal';
+export const isReservedProviderId = (providerId: string): boolean =>
+  providerId.trim().toLowerCase() === INTERNAL_PROVIDER_ID;
+export const isReservedIdempotencyKey = (key: string): boolean =>
+  key.trim().toLowerCase().startsWith(`${INTERNAL_PROVIDER_ID}:`);
+
 // Máquina de estados:
 //   (nasce) PENDING
 //   PENDING             -> PROCESSED | REJECTED | FAILED | PENDING_REFERENCE
@@ -156,9 +164,9 @@ export class WagerTransaction {
     }
     const state: WagerTransactionState = {
       id: props.id,
-      providerId: 'internal',
+      providerId: INTERNAL_PROVIDER_ID,
       externalTransactionId: props.walletId,
-      idempotencyKey: `internal:opening:${props.walletId}`,
+      idempotencyKey: `${INTERNAL_PROVIDER_ID}:opening:${props.walletId}`,
       payloadHash: props.payloadHash,
       walletId: props.walletId,
       playerId: props.playerId,

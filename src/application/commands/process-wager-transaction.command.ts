@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { FailureCode } from '../../domain/errors/failure-code.js';
 import type { Money } from '../../domain/money/money.js';
 import { WagerTransactionKind } from '../../domain/wager/wager-transaction-kind.js';
+import {
+  isReservedIdempotencyKey,
+  isReservedProviderId,
+} from '../../domain/wager/wager-transaction.js';
 import { InvalidCommandError } from '../errors/application-errors.js';
 import {
   MAX_IDEMPOTENCY_KEY_LENGTH,
@@ -40,7 +44,10 @@ export interface ProcessWagerTransactionCommand {
 // desconhecidas são ignoradas (o zod as descarta), para um campo novo do provedor não
 // derrubar o contrato.
 const businessSchema = z.object({
-  providerId: text(),
+  providerId: text().refine(
+    (value) => !isReservedProviderId(value),
+    'is reserved for the system',
+  ),
   externalTransactionId: text(),
   playerId: uuid,
   walletId: uuid,
@@ -51,7 +58,10 @@ const businessSchema = z.object({
   referenceExternalTransactionId: text().optional(),
 });
 
-const idempotencyKeySchema = text(MAX_IDEMPOTENCY_KEY_LENGTH);
+const idempotencyKeySchema = text(MAX_IDEMPOTENCY_KEY_LENGTH).refine(
+  (value) => !isReservedIdempotencyKey(value),
+  'is in a namespace reserved for the system',
+);
 
 // Ordem dos erros, para o provedor corrigir uma coisa por vez:
 //   1. forma do payload e chave de idempotência  -> INVALID_PAYLOAD

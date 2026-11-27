@@ -4,7 +4,10 @@ import type { MoneyProps } from '../../domain/money/money.js';
 import { Wallet } from '../../domain/wallet/wallet.js';
 import { computePayloadHash } from '../../domain/wager/wager-payload-hash.js';
 import { WagerTransactionKind } from '../../domain/wager/wager-transaction-kind.js';
-import { WagerTransaction } from '../../domain/wager/wager-transaction.js';
+import {
+  INTERNAL_PROVIDER_ID,
+  WagerTransaction,
+} from '../../domain/wager/wager-transaction.js';
 import { parseCreateWalletCommand } from '../commands/create-wallet.command.js';
 import type { Clock } from '../ports/clock.js';
 import type { IdGenerator } from '../ports/id-generator.js';
@@ -69,7 +72,7 @@ export class CreateWalletUseCase {
         playerId: wallet.playerId,
         money: command.initialBalance,
         payloadHash: computePayloadHash({
-          providerId: 'internal',
+          providerId: INTERNAL_PROVIDER_ID,
           externalTransactionId: wallet.id,
           playerId: wallet.playerId,
           walletId: wallet.id,
