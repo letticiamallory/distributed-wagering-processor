@@ -97,8 +97,10 @@ pode assumir a ordem da fila.
 
 ### 7. SIGTERM
 O `bootstrap` instala o encerramento em ordem (`gracefulShutdown`): o `/health/ready` vira 503, o
-HTTP **drena** por `HTTP_SHUTDOWN_DRAIN_MS` (padrão 5 s) com o banco aberto, o servidor para de
-aceitar e termina as requisições em andamento, e só então o `app.close()`. (O `enableShutdownHooks`
+HTTP **drena** por `HTTP_SHUTDOWN_DRAIN_MS` (padrão 5 s) com o banco aberto, o consumidor e os
+workers param **com o HTTP ainda no ar** (o `/health/live` segue 200 enquanto a mensagem em andamento
+termina), o servidor para de aceitar e termina as requisições em andamento, e só então o
+`app.close()` fecha o banco. (O `enableShutdownHooks`
 do Nest fazia o `app.close()` primeiro: a persistência fechava antes do HTTP, e quem chegava no
 encerramento levava 503 ou conexão cortada.) O consumidor então:
 1. **para de buscar** (e aborta o long polling parado);

@@ -8,6 +8,9 @@ import {
 } from './infrastructure/observability/json-logger.js';
 import { HealthService } from './interfaces/http/health/health.service.js';
 import { loadHttpConfig } from './interfaces/http/http-config.js';
+import { WagerSqsConsumer } from './interfaces/sqs/wager-sqs.consumer.js';
+import { OutboxPublisherWorker } from './interfaces/workers/outbox-publisher.worker.js';
+import { PendingReferenceWorker } from './interfaces/workers/pending-reference.worker.js';
 
 export interface ShutdownOptions {
   // Por quanto tempo o HTTP continua atendendo, com o /health/ready em 503.
@@ -23,10 +26,12 @@ const logger = new Logger('Shutdown');
 // O encerramento, na ordem (C7, ADR-0011, ADR-0014):
 //   1. /health/ready vira 503 (o balanceador para de mandar tráfego novo);
 //   2. drenagem: o HTTP continua atendendo normalmente, com o banco aberto, por drainMs;
-//   3. o servidor HTTP para de aceitar e espera as requisições em andamento (até timeoutMs, e
+//   3. o consumidor SQS termina (ou devolve) as mensagens em andamento e os workers param, COM O HTTP
+//      AINDA NO AR: enquanto isso o /health/live responde 200 (um orquestrador não mata o processo
+//      no meio de uma mensagem) e o /health/ready, 503;
+//   4. o servidor HTTP para de aceitar e espera as requisições em andamento (até timeoutMs, e
 //      depois corta as conexões que sobraram);
-//   4. app.close(): o consumidor SQS termina ou devolve as mensagens, os workers param, e SÓ ENTÃO a
-//      persistência fecha o pool.
+//   5. app.close(): o resto, e SÓ ENTÃO a persistência fecha o pool.
 // Antes, o enableShutdownHooks do Nest fazia o 4 primeiro (os módulos são destruídos antes de o
 // HTTP fechar): quem chegava durante o encerramento achava o banco fechado (503) ou a conexão
 // cortada.
@@ -38,6 +43,9 @@ export async function gracefulShutdown(
   app.get(HealthService, { strict: false }).markShuttingDown();
   logger.log({ event: 'shutdown_draining', signal, drainMs: options.drainMs });
   await new Promise((resolve) => setTimeout(resolve, options.drainMs));
+
+  await stopBackgroundWork(app);
+  logger.log({ event: 'shutdown_background_stopped', signal });
 
   const server = app.getHttpServer() as Server;
   await new Promise<void>((resolve) => {
@@ -56,6 +64,24 @@ export async function gracefulShutdown(
 
   await app.close();
   options.exit(signal);
+}
+
+// O consumidor SQS e os workers, parados ANTES de o HTTP fechar. Cada stop() aceita ser chamado de
+// novo: o onModuleDestroy deles, no app.close(), vira no-op. Um componente desligado não existe
+// (o provider vale undefined).
+async function stopBackgroundWork(app: INestApplication): Promise<void> {
+  const optional = <T>(token: new (...args: never[]) => T): T | undefined => {
+    try {
+      return app.get(token, { strict: false }) as T | undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  await Promise.all([
+    optional(WagerSqsConsumer)?.stop(),
+    optional(OutboxPublisherWorker)?.stop(),
+    optional(PendingReferenceWorker)?.stop(),
+  ]);
 }
 
 // A aplicação como o main.ts a sobe. Separada dele para os testes conferirem que o SIGTERM está

@@ -357,8 +357,10 @@ disputa pelo lock); a garantia de correção é do banco.
   FIFO a descarta na maioria dos casos; a DLQ não é processada).
 - **SIGTERM, em ordem:** o `/health/ready` vira 503 no ato; o HTTP **drena** por
   `HTTP_SHUTDOWN_DRAIN_MS` (5 s), atendendo normalmente com o banco aberto, para o balanceador parar
-  de mandar tráfego; o servidor para de aceitar e termina as requisições em andamento
-  (`HTTP_SHUTDOWN_TIMEOUT_MS`); só então o consumidor, os workers e o banco fecham. Antes o Nest
+  de mandar tráfego; o consumidor termina (ou devolve) as mensagens em andamento e os workers param,
+  **com o HTTP ainda no ar** (`/health/live` 200, para um orquestrador não matar o processo no meio
+  de uma mensagem); então o servidor para de aceitar e termina as requisições em andamento
+  (`HTTP_SHUTDOWN_TIMEOUT_MS`); só então o banco fecha. Antes o Nest
   fechava o banco antes do HTTP, e quem chegava no encerramento levava 503 ou conexão cortada.
 - **SIGTERM:** para de buscar, espera as mensagens em andamento (`SQS_SHUTDOWN_TIMEOUT_MS`) e
   devolve à fila, com visibilidade 0, as que foram recebidas e não começaram.
