@@ -223,6 +223,8 @@ em [.env.example](.env.example). Os padrões abaixo são conferidos por um teste
 | `DB_ACQUIRE_TIMEOUT_MS` | `3000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. O padrão de 3 s foi medido (ARCHITECTURE.md, seção 2): com 1 s, a rajada da tabela dá 503 em mais da metade das requisições. |
 | `DB_LOCK_TIMEOUT_MS` | `5000` | 1 a 600000 | Quanto esperar pelo lock de uma wallet antes de responder 503. |
 | `RETRY_AFTER_SECONDS` | `1` | 1 a 3600 | O `Retry-After` do 503. |
+| `HTTP_SHUTDOWN_DRAIN_MS` | `5000` | 0 a 60000 | No SIGTERM, por quanto tempo o HTTP continua atendendo com o `/health/ready` já em 503, para o balanceador parar de mandar tráfego. |
+| `HTTP_SHUTDOWN_TIMEOUT_MS` | `10000` | 0 a 120000 | Depois da drenagem, quanto esperar as requisições em andamento antes de cortar as conexões. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `fatal` | Nível mínimo dos logs JSON. |
 | `PENDING_REFERENCE_MAX_ATTEMPTS` | `10` | inteiro ≥ 1 | Tentativas totais (a 1ª gravação conta) até rejeitar uma referência que não chega. O campo `attempts` da transação conta só as tentativas que **não** acharam a referência; a que decide não entra, então uma rejeição com o limite 10 mostra `attempts: 9`. |
 | `PENDING_REFERENCE_BASE_DELAY_MS` | `1000` | inteiro ≥ 1 | Base do backoff da espera pela referência. |

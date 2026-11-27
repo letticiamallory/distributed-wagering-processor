@@ -21,7 +21,7 @@ import {
 // No Windows o Node/Bun não entrega SIGTERM como sinal: `kill('SIGTERM')` encerra o processo à
 // força, sem rodar nenhum handler, e este teste mediria outra coisa. Por isso ele só roda onde o
 // sinal existe (Linux e macOS, inclusive o CI). O que vale no Windows (o wiring do
-// enableShutdownHooks e o app.close() de verdade) está em shutdown-hooks.test.ts e em
+// gracefulShutdown do bootstrap e o app.close() de verdade) está em shutdown-hooks.test.ts e em
 // sqs-consumer.app.test.ts.
 const hasPosixSignals = process.platform !== 'win32';
 const realSignal = hasPosixSignals ? test : test.skip;

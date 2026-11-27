@@ -96,10 +96,14 @@ wallet em grupos diferentes e vários consumidores (há um teste assim). Nenhuma
 pode assumir a ordem da fila.
 
 ### 7. SIGTERM
-`enableShutdownHooks()` no `bootstrap` liga o sinal ao `app.close()`. O consumidor então:
+O `bootstrap` instala o encerramento em ordem (`gracefulShutdown`): o `/health/ready` vira 503, o
+HTTP **drena** por `HTTP_SHUTDOWN_DRAIN_MS` (padrão 5 s) com o banco aberto, o servidor para de
+aceitar e termina as requisições em andamento, e só então o `app.close()`. (O `enableShutdownHooks`
+do Nest fazia o `app.close()` primeiro: a persistência fechava antes do HTTP, e quem chegava no
+encerramento levava 503 ou conexão cortada.) O consumidor então:
 1. **para de buscar** (e aborta o long polling parado);
 2. **espera** as mensagens em andamento, até `SQS_SHUTDOWN_TIMEOUT_MS` (padrão 20 s, abaixo dos
-   30 s do `stop_grace_period` do compose);
+   45 s do `stop_grace_period` do compose, que inclui a drenagem do HTTP);
 3. **devolve** (`ChangeMessageVisibility 0`) as que foram recebidas e não começaram, para outra
    instância pegar na hora;
 4. o banco só fecha **depois** (o hook do consumidor roda antes do hook do MikroORM; há um teste

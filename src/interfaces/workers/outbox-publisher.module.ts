@@ -109,7 +109,7 @@ export class OutboxPublisherModule
     }
   }
 
-  // O SIGTERM chega aqui (enableShutdownHooks -> app.close()): o ciclo em andamento termina
+  // O SIGTERM chega aqui (gracefulShutdown do bootstrap -> app.close(), depois de o HTTP drenar): o ciclo em andamento termina
   // (marca o que publicou) e nenhum outro começa. O banco só fecha depois.
   async onModuleDestroy(): Promise<void> {
     if (this.worker) {

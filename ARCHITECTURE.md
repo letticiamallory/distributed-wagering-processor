@@ -355,6 +355,11 @@ disputa pelo lock); a garantia de correção é do banco.
   da wallet por N entregas por uma mensagem que nunca vai funcionar. Custo aceito: uma
   **duplicata possível na DLQ** se o processo morrer entre o envio e o delete (a deduplicação do
   FIFO a descarta na maioria dos casos; a DLQ não é processada).
+- **SIGTERM, em ordem:** o `/health/ready` vira 503 no ato; o HTTP **drena** por
+  `HTTP_SHUTDOWN_DRAIN_MS` (5 s), atendendo normalmente com o banco aberto, para o balanceador parar
+  de mandar tráfego; o servidor para de aceitar e termina as requisições em andamento
+  (`HTTP_SHUTDOWN_TIMEOUT_MS`); só então o consumidor, os workers e o banco fecham. Antes o Nest
+  fechava o banco antes do HTTP, e quem chegava no encerramento levava 503 ou conexão cortada.
 - **SIGTERM:** para de buscar, espera as mensagens em andamento (`SQS_SHUTDOWN_TIMEOUT_MS`) e
   devolve à fila, com visibilidade 0, as que foram recebidas e não começaram.
 - Testes: crash real (o processo filho se mata com `SIGKILL` no instante do delete, depois do

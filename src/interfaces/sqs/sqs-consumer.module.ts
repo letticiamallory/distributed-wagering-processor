@@ -103,7 +103,7 @@ export class SqsConsumerModule
     }
   }
 
-  // O SIGTERM chega aqui (enableShutdownHooks -> app.close()): para de buscar, termina o que
+  // O SIGTERM chega aqui (gracefulShutdown do bootstrap -> app.close(), depois de o HTTP drenar): para de buscar, termina o que
   // está em andamento e devolve o resto. O banco só fecha depois (ver o teste do e2e).
   async onModuleDestroy(): Promise<void> {
     if (this.consumer) {
