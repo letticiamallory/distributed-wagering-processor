@@ -19,6 +19,12 @@ services:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U wallet -d wallet"]
       interval: 5s
       timeout: 3s
+      # O primeiro boot (volume vazio: initdb, o banco de testes e o checkpoint de shutdown do
+      # servidor temporário) levou 59 s no Docker Desktop do Windows. Falhas dentro do
+      # start_period não contam: a paciência total é 120 s + 10 x 5 s = 170 s. Num boot com o
+      # volume já criado o check fica verde em segundos e o start_period não atrasa nada.
+      start_period: 120s
+      start_interval: 2s
       retries: 10
 
   sqs:
@@ -34,6 +40,8 @@ services:
         - "import urllib.request; urllib.request.urlopen('http://localhost:4566/_ministack/health', timeout=3)"
       interval: 5s
       timeout: 5s
+      start_period: 30s
+      start_interval: 2s
       retries: 10
 
   # Roda uma vez, cria as filas e termina.

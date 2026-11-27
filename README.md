@@ -29,6 +29,15 @@ testes `wallet_test`), o MiniStack, o `queues-init` (cria `wager-transactions.fi
 aplicação em `http://localhost:3000`, que já roda o consumidor SQS, o publisher da outbox e o worker
 de referências pendentes.
 
+Na primeira subida (volume vazio) o PostgreSQL leva perto de 1 minuto para inicializar; o
+healthcheck espera até 170 s, então o `--wait` pode demorar sem que nada esteja errado.
+
+> **O MiniStack guarda as filas só em memória (não persiste nada).** Se o container `sqs` reiniciar,
+> as filas e as mensagens que estavam nelas somem, e o consumidor passa a logar
+> `queue_receive_failed`. Para recriá-las, rode de novo `docker compose up -d --wait`: ele executa
+> outra vez o `queues-init` (que é idempotente). Os eventos da outbox não se perdem: ficam no banco e
+> são publicados quando a fila volta.
+
 ```bash
 bun install --frozen-lockfile
 bun run test                # suíte principal
