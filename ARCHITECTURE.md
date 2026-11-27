@@ -407,7 +407,7 @@ reconstrói** (a soma de créditos menos débitos, a corrente em que cada `balan
 | `wallet_reconciliation_*` | execuções, divergências por tipo, divergências acumuladas, última execução |
 
 - **Health:** `GET /health/live` só diz que o processo responde (não olha o banco, de propósito);
-  `GET /health/ready` confere o **Postgres e o SQS de verdade** e responde 503 enquanto qualquer
+  `GET /health/ready` confere o **Postgres e o SQS de verdade**, e no SQS **as filas, por nome**, de que o processo precisa (a de entrada e a DLQ se o consumidor está ligado, a de eventos se o publisher está ligado): o MiniStack reiniciado responde, mas perdeu as filas, e responde 503 enquanto qualquer
   um estiver fora, **e também no primeiro instante do SIGTERM** (`shutting_down`), para o
   balanceador parar de mandar tráfego. Há testes que derrubam um PostgreSQL e um MiniStack
   **reais** (containers descartáveis) e veem o 503 e depois o 200.
