@@ -1,8 +1,14 @@
 // As moedas da ISO-4217 (lista 1, os códigos VIGENTES), fixas no domínio: uma moeda fora daqui é
 // entrada inválida, na wallet e na transação. Estado da lista: as emendas até 2025, com a troca do
-// ANG pelo XCG (31/03/2025), do ZWL pelo ZWG (2024), do SLL pelo SLE e do HRK pelo EUR (2023). Os
-// códigos de fundos, metais e uso especial (X..) fazem parte da lista e estão aqui, porque a lista
-// é a completa. Uma emenda nova da ISO entra aqui, com o teste que compara com o Intl.
+// ANG pelo XCG (31/03/2025), do ZWL pelo ZWG (2024), do SLL pelo SLE e do HRK pelo EUR (2023). Uma
+// emenda nova da ISO entra aqui, com o teste que compara com o Intl.
+//
+// FORA da lista, de propósito (N-3 da segunda avaliação): os códigos ISO que não são moeda corrente,
+// porque uma wallet de apostas neles não faz sentido. São eles: XXX ("nenhuma moeda"), XTS (reservado
+// para testes), os metais XAU, XAG, XPT e XPD, o direito especial de saque XDR e as unidades de conta
+// XBA, XBB, XBC, XBD, XSU e XUA. As moedas reais que começam com X ficam: XAF, XOF, XPF, XCD e XCG.
+// Os códigos de fundos ligados a uma moeda nacional (BOV, CLF, COU, MXV, USN, UYI, UYW, CHE, CHW)
+// continuam: são da lista vigente e designam valores em dinheiro de um país.
 //
 // O Money continua exigindo 2 casas para todas (ADR-0006): JPY sem centavos não é suportado.
 const CODES = [
@@ -163,23 +169,10 @@ const CODES = [
   'VUV',
   'WST',
   'XAF',
-  'XAG',
-  'XAU',
-  'XBA',
-  'XBB',
-  'XBC',
-  'XBD',
   'XCD',
   'XCG',
-  'XDR',
   'XOF',
-  'XPD',
   'XPF',
-  'XPT',
-  'XSU',
-  'XTS',
-  'XUA',
-  'XXX',
   'YER',
   'ZAR',
   'ZMW',

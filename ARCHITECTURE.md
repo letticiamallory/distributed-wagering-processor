@@ -420,8 +420,11 @@ Interpretações próprias, todas testadas:
 - **WIN e LOSS de 0,00 são aceitos** (o resultado é registrado, sem lançamento); BET, REFUND e
   ROLLBACK precisam de valor maior que zero.
 - **A BET não leva referência**: `referenceExternalTransactionId` numa BET é 400.
-- **Moeda**: só códigos ISO-4217 vigentes (`src/domain/money/iso-4217.ts`); fora da lista é 400; uma
-  moeda válida que não é a da wallet é `422 CURRENCY_MISMATCH`.
+- **Moeda**: só códigos ISO-4217 vigentes **de moeda corrente** (`src/domain/money/iso-4217.ts`);
+  fora da lista é 400. Ficam de fora, de propósito, os códigos ISO que não são moeda: `XXX` (nenhuma
+  moeda), `XTS` (testes), os metais `XAU`, `XAG`, `XPT`, `XPD`, o `XDR` e as unidades de conta
+  `XBA`–`XBD`, `XSU`, `XUA`; as moedas reais com X (`XAF`, `XOF`, `XPF`, `XCD`, `XCG`) ficam.
+  Uma moeda válida que não é a da wallet é `422 CURRENCY_MISMATCH`.
 - **Teto do saldo**: 16 dígitos inteiros, também no `initialBalance`; um crédito que passaria dele
   é `422 BALANCE_LIMIT_EXCEEDED`, gravado e auditável.
 - **O provedor `internal` é do sistema** (o da transação de abertura): `providerId` `internal` ou

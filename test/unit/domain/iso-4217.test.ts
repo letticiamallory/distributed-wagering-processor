@@ -24,8 +24,9 @@ describe('the ISO-4217 list', () => {
     expect(unknown).toEqual([]);
   });
 
-  test('has the active codes (about 180), including the recent ones', () => {
-    expect(ISO_4217_CURRENCIES.size).toBeGreaterThan(170);
+  // ~180 códigos vigentes, menos os 13 que não são moeda corrente (XXX, XTS, metais...).
+  test('has the active circulating codes (about 165), including the recent ones', () => {
+    expect(ISO_4217_CURRENCIES.size).toBeGreaterThan(160);
     expect(ISO_4217_CURRENCIES.size).toBeLessThan(intl.size);
     for (const code of [
       'BRL',
@@ -55,6 +56,44 @@ describe('the ISO-4217 list', () => {
     ]) {
       expect(isIso4217Currency(code)).toBe(false);
     }
+  });
+
+  // N-3 da segunda avaliação: uma wallet de apostas em "nenhuma moeda" (XXX), na moeda de teste (XTS),
+  // em ouro ou numa unidade de conta não faz sentido. Os códigos ISO que não são moeda corrente saem;
+  // as moedas reais que começam com X ficam.
+  test('does not have the ISO codes that are not a circulating currency', () => {
+    for (const code of [
+      'XXX',
+      'XTS',
+      'XAU',
+      'XAG',
+      'XPT',
+      'XPD',
+      'XDR',
+      'XBA',
+      'XBB',
+      'XBC',
+      'XBD',
+      'XSU',
+      'XUA',
+    ]) {
+      expect(isIso4217Currency(code)).toBe(false);
+    }
+  });
+
+  test('keeps the real currencies whose code starts with X', () => {
+    for (const code of ['XAF', 'XOF', 'XPF', 'XCD', 'XCG']) {
+      expect(isIso4217Currency(code)).toBe(true);
+    }
+  });
+
+  test('a wallet in XXX is 400 INVALID_PAYLOAD', () => {
+    expect(() =>
+      parseCreateWalletCommand({
+        playerId: '0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1',
+        initialBalance: { amount: '10.00', currency: 'XXX' },
+      }),
+    ).toThrow(InvalidCommandError);
   });
 
   test('every code is 3 uppercase letters', () => {
