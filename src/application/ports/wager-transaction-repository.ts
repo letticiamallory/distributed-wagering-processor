@@ -24,6 +24,14 @@ export abstract class WagerTransactionRepository extends WagerTransactionReader 
 
   // Esta BET já pagou prêmio? Um WIN PROCESSED com valor > 0, sem reversão PROCESSED, que aponta
   // para ela OU que não aponta para nada e é da mesma wallet, provedor e rodada (ADR-0005).
+  // A rodada (mesma wallet, provedor e roundId) tem uma BET PROCESSED que já foi revertida por um
+  // REFUND ou ROLLBACK PROCESSED? (ADR-0005: um WIN sem referência ali não é pago.)
+  abstract hasReversedBetInRound(round: {
+    walletId: string;
+    providerId: string;
+    roundId: string;
+  }): Promise<boolean>;
+
   abstract hasSettledWin(
     bet: Pick<WagerTransaction, 'id' | 'walletId' | 'providerId' | 'roundId'>,
   ): Promise<boolean>;

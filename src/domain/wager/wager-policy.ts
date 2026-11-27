@@ -21,6 +21,10 @@ export interface PolicyInput {
   alreadyReversed: boolean;
   // A referência é uma BET com um WIN PROCESSED, ainda não revertido, apontando para ela.
   hasSettledWin: boolean;
+  // A rodada desta transação (mesma wallet, provedor e roundId) tem uma BET já revertida por um
+  // REFUND ou ROLLBACK PROCESSED. Só interessa para um WIN sem referência (o espelho do
+  // hasSettledWin, ADR-0005). Opcional: ausente vale false.
+  roundBetReversed?: boolean;
   // attempts + 1 >= limite de tentativas de resolver a referência.
   attemptsExhausted: boolean;
 }
@@ -60,6 +64,15 @@ export class WagerPolicy {
     }
 
     if (!WagerPolicy.pointsToReference(transaction)) {
+      // Um WIN sem referência que paga, numa rodada cuja BET já foi devolvida: pagá-lo deixaria o
+      // jogador com a aposta de volta e com o prêmio. O espelho do REFERENCE_SETTLED (ADR-0005).
+      if (
+        transaction.kind === K.Win &&
+        transaction.affectsBalance() &&
+        input.roundBetReversed === true
+      ) {
+        return reject(FailureCode.ReferenceAlreadyReversed);
+      }
       return WagerPolicy.balanceDecision(wallet, transaction, undefined);
     }
 

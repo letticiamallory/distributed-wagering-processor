@@ -403,7 +403,10 @@ Interpretações próprias, todas testadas:
   o dinheiro duas vezes. Índice único parcial `uq_wtx_reversed_once`.
 - **Prêmio pago impede devolver a aposta** (`REFERENCE_SETTLED`). Um WIN `PROCESSED` de valor maior
   que zero, não revertido, que aponta para a BET **ou** que não aponta para nada e é da mesma
-  wallet, provedor e rodada, liquida a BET: devolvê-la deixaria o jogador com os dois.
+  wallet, provedor e rodada, liquida a BET: devolvê-la deixaria o jogador com os dois. **A ordem
+  inversa também:** se a BET da rodada já foi devolvida (REFUND ou ROLLBACK), um WIN da mesma rodada,
+  com ou sem referência e de valor maior que zero, é `REFERENCE_ALREADY_REVERSED`. Nas duas ordens, e
+  numa corrida das duas, o jogador nunca fica com a aposta de volta e com o prêmio.
 - **WIN e LOSS de 0,00 são aceitos** (o resultado é registrado, sem lançamento); BET, REFUND e
   ROLLBACK precisam de valor maior que zero.
 - **A BET não leva referência**: `referenceExternalTransactionId` numa BET é 400.
