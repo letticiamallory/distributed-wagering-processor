@@ -286,7 +286,8 @@ disputa pelo lock); a garantia de correção é do banco.
 | `IDEMPOTENCY_KEY_REUSED`, `EXTERNAL_ID_CONFLICT` (terminais e determinísticos) | **ack** + log `warn` com `messageId` e `idempotencyKey` |
 | `DEPENDENCY_UNAVAILABLE` (banco, `lock_timeout`, deadlock, pool) | **não apaga**; devolve a visibilidade com backoff |
 | erro que não sabemos classificar (bug) | tratado como transitório; o limite o leva à DLQ |
-| JSON, envelope ou payload inválido; `WALLET_NOT_FOUND`; mesmo `messageId` com outro conteúdo; erro `critical` | **DLQ** (o `critical` também loga `fatal`, uma vez) |
+| JSON, envelope ou payload inválido (inclusive texto com caractere de controle ou Unicode inválido); `WALLET_NOT_FOUND`; mesmo `messageId` com outro conteúdo; erro `critical` | **DLQ** (o `critical` também loga `fatal`, uma vez) |
+| o banco recusou o **dado** (SQLSTATE classe `22`, ou `08P01`): `PERMANENT_DATA_ERROR` | **DLQ** já: reenviar dá o mesmo erro, e o retry seguraria a wallet por minutos |
 | transitório na última entrega permitida | **DLQ** (`RETRIES_EXHAUSTED`) |
 
 - **Por que conflito de idempotência é *ack* e `WALLET_NOT_FOUND` é DLQ:** o conflito é terminal e

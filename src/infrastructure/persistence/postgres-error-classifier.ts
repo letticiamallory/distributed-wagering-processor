@@ -2,6 +2,7 @@ import {
   ApplicationError,
   DependencyUnavailableError,
   DuplicateKeyError,
+  PermanentDataError,
 } from '../../application/errors/application-errors.js';
 import { DomainError } from '../../domain/errors/domain-error.js';
 
@@ -71,6 +72,21 @@ function candidatesOf(error: unknown): Candidate[] {
   return found;
 }
 
+// Erros de DADO: reenviar o mesmo dado dá o mesmo erro.
+//   classe 22 = data_exception (22021 encoding/NUL, 22003 overflow, 22P02 sintaxe, 22001...)
+//   08P01     = protocol_violation: o que o Postgres devolve quando um parâmetro tem um NUL
+const DATA_CLASS = '22';
+const DATA_SQLSTATE = new Set(['08P01']);
+
+function isDataError(candidate: Candidate): boolean {
+  const code = typeof candidate.code === 'string' ? candidate.code : undefined;
+  return (
+    code !== undefined &&
+    code.length === 5 &&
+    (code.startsWith(DATA_CLASS) || DATA_SQLSTATE.has(code))
+  );
+}
+
 function isTransient(candidate: Candidate): boolean {
   const code = typeof candidate.code === 'string' ? candidate.code : undefined;
   if (code !== undefined) {
@@ -101,6 +117,12 @@ export function classifyPersistenceError(error: unknown): unknown {
     const constraint =
       typeof unique.constraint === 'string' ? unique.constraint : 'unknown';
     return new DuplicateKeyError(constraint, error);
+  }
+
+  // Antes dos transitórios: o 08P01 é da classe 08 (conexão), mas é erro de dado.
+  const data = candidates.find(isDataError);
+  if (data) {
+    return new PermanentDataError(data.code as string, error);
   }
 
   const transient = candidates.find(isTransient);

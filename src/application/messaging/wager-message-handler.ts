@@ -1,10 +1,15 @@
 import { z } from 'zod';
 import {
+  STORABLE_TEXT_MESSAGE,
+  isStorableText,
+} from '../commands/command-parsing.js';
+import {
   ApplicationError,
   ExternalIdConflictError,
   IdempotencyKeyReusedError,
   InboxMessageReusedError,
   InvalidCommandError,
+  PermanentDataError,
   WalletNotFoundError,
 } from '../errors/application-errors.js';
 import { WagerTransactionStatus } from '../../domain/wager/wager-transaction-status.js';
@@ -24,6 +29,7 @@ export type DeadLetterReason =
   | 'INVALID_PAYLOAD'
   | 'WALLET_NOT_FOUND'
   | 'INBOX_MESSAGE_REUSED'
+  | 'PERMANENT_DATA_ERROR'
   | 'CRITICAL'
   | 'RETRIES_EXHAUSTED';
 
@@ -83,7 +89,11 @@ const notBlank = (value: string) => value.trim() !== '';
 // O envelope do enunciado (seção 10). `data` só precisa ser um objeto aqui: os campos de negócio
 // são validados pelo caso de uso, as MESMAS regras do HTTP.
 const envelopeSchema = z.object({
-  messageId: z.string().max(255).refine(notBlank, 'must not be blank'),
+  messageId: z
+    .string()
+    .max(255)
+    .refine(notBlank, 'must not be blank')
+    .refine(isStorableText, STORABLE_TEXT_MESSAGE),
   type: z.literal(WAGER_MESSAGE_TYPE),
   occurredAt: z.iso.datetime({ offset: true }),
   data: z
@@ -167,6 +177,10 @@ export class WagerMessageHandler {
           error,
           ...ids,
         };
+      }
+      // O banco recusou o dado: reenviar dá o mesmo erro. DLQ já, sem segurar a wallet com retries.
+      if (error instanceof PermanentDataError) {
+        return deadLetter('PERMANENT_DATA_ERROR', ids, error);
       }
       if (error instanceof InboxMessageReusedError) {
         return deadLetter('INBOX_MESSAGE_REUSED', ids, error);
