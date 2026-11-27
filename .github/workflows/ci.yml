@@ -90,4 +90,46 @@ jobs:
       - run: bun run test
       - run: bun run test:concurrency
 
-  # O job de resiliência (matar processos, derrubar o banco) entra na Fase 7.
+
+  # O caminho do README, do zero, como quem avalia: `docker compose up -d --wait` com volumes NOVOS
+  # (o Postgres faz o initdb), a imagem construída deste checkout, e os exemplos do README rodando
+  # contra ESSA stack. O job "test" usa service containers e não passa pelo compose: foi assim que
+  # um healthcheck curto demais para o primeiro boot chegou à main sem quebrar o CI.
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.5
+
+      - run: bun install --frozen-lockfile
+
+      - name: Start from empty volumes
+        run: docker compose down -v --remove-orphans
+
+      - name: Boot the stack exactly as the README says
+        run: docker compose up -d --wait --build
+
+      - name: Run the README examples against the compose stack
+        run: bun test test/e2e/readme-examples.test.ts
+        env:
+          README_EXAMPLE_BASE: http://localhost:3000
+          README_EXAMPLE_SQS_QUEUE_URL: http://localhost:4566/000000000000/wager-transactions.fifo
+          # O preload dos testes exige o banco de testes (criado pelo init-db.sql do compose) e o SQS.
+          TEST_DATABASE_URL: postgres://wallet:wallet@localhost:5432/wallet_test
+          SQS_ENDPOINT: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_REGION: us-east-1
+
+      - name: Compose logs (on failure)
+        if: failure()
+        run: docker compose ps -a && docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

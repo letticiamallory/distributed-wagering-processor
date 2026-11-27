@@ -11,13 +11,26 @@ import { createTestQueues, type TestQueues } from '../support/queues.js';
 const README = readFileSync('README.md', 'utf8');
 const BLOCK = /```bash readme-example\n([\s\S]*?)```/.exec(README)?.[1];
 
-let app: AppProcess;
-let queues: TestQueues;
+let app: AppProcess | undefined;
+let queues: TestQueues | undefined;
 let dir: string;
 
-// Um processo de verdade, com o consumidor SQS e o worker de pendentes LIGADOS (como no compose),
-// mas na fila de teste própria: nunca a wager-transactions.fifo real.
+// Dois modos:
+// - padrão: um processo de verdade, com o consumidor SQS e o worker de pendentes LIGADOS (como no
+//   compose), mas na fila de teste própria: nunca a wager-transactions.fifo real.
+// - stack externa (README_EXAMPLE_BASE): o exemplo roda contra uma stack que já está no ar, do jeito
+//   que o README manda (o job "compose" do CI sobe o docker compose do zero e aponta para ela). Aí
+//   não sobe app nem filas: usa as da stack (README_EXAMPLE_SQS_QUEUE_URL, padrão a do compose).
+const EXTERNAL_BASE = process.env.README_EXAMPLE_BASE;
+const EXTERNAL_QUEUE_URL =
+  process.env.README_EXAMPLE_SQS_QUEUE_URL ??
+  'http://localhost:4566/000000000000/wager-transactions.fifo';
+
 beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'readme-'));
+  if (EXTERNAL_BASE) {
+    return;
+  }
   queues = await createTestQueues();
   app = spawnApp({
     SQS_CONSUMER_ENABLED: 'true',
@@ -30,7 +43,6 @@ beforeAll(async () => {
     PENDING_REFERENCE_MAX_DELAY_MS: '1000',
   });
   await app.waitReady();
-  dir = mkdtempSync(join(tmpdir(), 'readme-'));
 }, 120_000);
 
 afterAll(async () => {
@@ -74,8 +86,10 @@ curl() {
     const child = Bun.spawn(['bash', file.replaceAll('\\', '/')], {
       env: {
         ...process.env,
-        BASE: app.url,
-        SQS_QUEUE_URL: queues.queueUrl,
+        BASE: EXTERNAL_BASE ?? (app as AppProcess).url,
+        SQS_QUEUE_URL: EXTERNAL_BASE
+          ? EXTERNAL_QUEUE_URL
+          : (queues as TestQueues).queueUrl,
         RUN: String(Date.now()).slice(-10),
       },
       stdout: 'pipe',
