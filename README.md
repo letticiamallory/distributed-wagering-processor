@@ -220,7 +220,7 @@ em [.env.example](.env.example). Os padrões abaixo são conferidos por um teste
 | `SQS_ENDPOINT` | (sem padrão) | | Endpoint do SQS (MiniStack no compose). `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_REGION` seguem o SDK da AWS (no compose: `test`, `test`, `us-east-1`). |
 | `DB_POOL_MIN` | `2` | inteiro ≥ 0 | Conexões mínimas do pool. |
 | `DB_POOL_MAX` | `20` | inteiro ≥ 0 | Conexões máximas **por processo**. Com o pool cheio, o pedido espera até `DB_ACQUIRE_TIMEOUT_MS` e vira 503. |
-| `DB_ACQUIRE_TIMEOUT_MS` | `1000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. |
+| `DB_ACQUIRE_TIMEOUT_MS` | `3000` | inteiro ≥ 0 | Quanto esperar por uma conexão livre. O padrão de 3 s foi medido (ARCHITECTURE.md, seção 2): com 1 s, a rajada da tabela dá 503 em mais da metade das requisições. |
 | `DB_LOCK_TIMEOUT_MS` | `5000` | 1 a 600000 | Quanto esperar pelo lock de uma wallet antes de responder 503. |
 | `RETRY_AFTER_SECONDS` | `1` | 1 a 3600 | O `Retry-After` do 503. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `fatal` | Nível mínimo dos logs JSON. |

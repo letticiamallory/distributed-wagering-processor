@@ -82,6 +82,9 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: us-east-1
+      # Quanto esperar por uma conexão livre do pool antes do 503 (ADR-0007). Dá para trocar na
+      # subida, para refazer a tabela do ARCHITECTURE.md: DB_ACQUIRE_TIMEOUT_MS=1000 docker compose up -d
+      DB_ACQUIRE_TIMEOUT_MS: ${DB_ACQUIRE_TIMEOUT_MS:-3000}
     ports:
       - "3000:3000"
     depends_on:

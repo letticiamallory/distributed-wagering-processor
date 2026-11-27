@@ -125,12 +125,36 @@ Desktop, Bun 1.4.5)). Os números de cada execução saem nas linhas `[concurren
 o mesmo banco (200 requisições, 67/67/66 por processo, 0 503). A suíte atual tem 18 cenários
 (entrou o dos 3 publishers).
 
-### O limite conhecido: a wallet quente (medido, **não é defeito**)
+### O limite conhecido: 503 em rajadas maiores que o pool (medido, **não é defeito**)
 
-Quem espera o lock de uma wallet **segura uma conexão do pool sem fazer nada**. Numa wallet
-quente as operações saem uma por vez, mas cada requisição na fila ocupa uma das 20 conexões do
-processo (`DB_POOL_MAX`); quando acabam, as seguintes esperam no máximo 1 s por uma conexão
-(`DB_ACQUIRE_TIMEOUT_MS`) e levam **503 com `Retry-After`**.
+**O 503 aparece em qualquer rajada maior que o pool**, não só na wallet quente. Cada requisição
+ocupa uma conexão do pool (20 por processo, `DB_POOL_MAX`) durante a transação inteira; quando
+chegam mais requisições ao mesmo tempo do que há conexões, as que sobram esperam
+`DB_ACQUIRE_TIMEOUT_MS` por uma conexão livre e levam **503 com `Retry-After`**, mesmo em wallets
+distintas. Rajada de 150 requisições em 30 wallets distintas (5 BETs de 30,00 em cada wallet de
+100,00), 3 execuções por valor, um processo (medido durante o desenvolvimento (27/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5)):
+
+| Acquire timeout | 503 na 1ª tentativa (de 150) | Tempo total | p95 | Rodadas de reenvio |
+| --- | --- | --- | --- | --- |
+| 1 s | 87–105 | 2,5–3,0 s | 1,9–2,6 s | 2–3 |
+| 3 s (padrão) | 19–52 | 4,5–5,2 s | 4,0–4,8 s | 1 |
+| 5 s | 0 | 5,5–6,1 s | 5,0–5,6 s | 0 |
+
+Em todas as execuções as 30 wallets terminaram certas (10,00, consistentes com o ledger) depois do
+reenvio dos 503. A vazão é a mesma nos três: um timeout maior troca 503 por espera. O padrão é
+**3 s**: corta de 50% a 80% dos 503 de 1 s e mantém o p95 abaixo de 5 s. 5 s não foi escolhido
+porque a espera pela conexão ficaria igual ao `lock_timeout` (5 s), e o pior caso de uma requisição
+dobraria para cerca de 10 s, o que tende a estourar o timeout do provedor e gerar reenvio de qualquer
+jeito. Refaça com:
+
+```bash
+DB_ACQUIRE_TIMEOUT_MS=1000 docker compose up -d --wait app   # ou 3000, 5000
+bun scripts/burst.ts                                          # 150 requisições, 30 wallets
+```
+
+Na **wallet quente** o efeito é mais forte: quem espera o lock de uma wallet **segura uma conexão do
+pool sem fazer nada**, então as operações saem uma por vez e as conexões acabam mais cedo. Os números
+abaixo foram medidos com o acquire timeout antigo, de 1 s:
 
 - **290 requisições simultâneas** na mesma wallet: de 154 a 343 respostas 503 com 1 processo; com
   3 processos, de 228 a 535 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker
@@ -148,14 +172,20 @@ processo (`DB_POOL_MAX`); quando acabam, as seguintes esperam no máximo 1 s por
   melhora**; com 1 processo o corte está dentro do ruído.
 
 É o **controle de admissão** funcionando: recusar com segurança em vez de enfileirar sem limite.
-O custo é tempo e tráfego de reenvio numa wallet quente, nunca correção.
+O custo é tempo e tráfego de reenvio numa rajada ou numa wallet quente, nunca correção.
+
+**Trabalho futuro: um pool próprio, pequeno, para os workers.** O publisher da outbox e o worker de
+pendentes usam o mesmo pool do HTTP; numa rajada eles também ficam sem conexão e perdem o ciclo
+(`outbox_cycle_failed`, `pending_cycle_failed`). Nada se perde (os eventos e as pendentes ficam no
+banco e saem no ciclo seguinte), só atrasa. Dar aos workers um pool próprio (2 ou 3 conexões, ou
+conexões reservadas) exige um segundo MikroORM e a ligação dele nos módulos; fica registrado aqui,
+não aplicado.
 
 **Correção estrutural (não aplicada):** uma **fila por wallet em memória, antes de pedir a
 conexão**, para quem espera ocupar uma entrada de fila (barata) e não uma conexão. O `FOR UPDATE`
 continua sendo a garantia entre processos. Exige limite de tamanho e de espera da fila e muda o
 desenho do ADR-0007, então entra com ADR próprio. Aumentar o pool foi descartado (3 processos × 50
-passam dos 100 do Postgres) e o acquire timeout de 1 s é uma escolha de controle de admissão (recusar cedo em vez de
-enfileirar; dá para medir outros valores com `DB_ACQUIRE_TIMEOUT_MS`).
+passam dos 100 do Postgres) e o acquire timeout de 3 s vem da tabela acima.
 
 ---
 
@@ -484,6 +514,7 @@ mesma validação do comando.
 
 | Limitação | O que se sabe | Onde |
 | --- | --- | --- |
+| **Rajada maior que o pool** (20 conexões por processo) responde 503, mesmo em wallets distintas | com o acquire timeout de 3 s (padrão), 19–52 respostas 503 em 150 requisições em 30 wallets (tabela e `bun scripts/burst.ts` na seção 2) | seção 2, ADR-0007 |
 | **Wallet quente** responde 503 sob pico | 290 requisições simultâneas na mesma wallet: 154–343 respostas 503 com 1 processo, 228–535 com 3 (medido durante o desenvolvimento (26/11/2026, Windows 11 com Docker Desktop, Bun 1.4.5); uma execução: `bun test test/concurrency/hot-wallet.test.ts`); **100% por pool sem conexão, 0 por `lock_timeout`**; nenhum reenvio duplicou. Correção estrutural (fila por wallet antes da conexão) **não aplicada** | seção 2, ADR-0007 |
 | **Ordem dos eventos** entre publishers | não garantida; o `walletVersion` ordena. Em falha parcial do `SendMessageBatch` o SQS pode aceitar entradas seguintes | seção 6.2, ADR-0012 |
 | **Métricas por processo** | cada instância expõe o próprio `/metrics`; somar entre réplicas é com o Prometheus | seção 8 |
